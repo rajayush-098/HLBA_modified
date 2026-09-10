@@ -1,0 +1,8 @@
+{
+  "name": "Vyapaar AI - Hyper-Local Business Advisor",
+  "description": "SIH 2026 Hyper-Local Business Advisor prototype with demographic analysis and market reach for micro-enterprises.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
