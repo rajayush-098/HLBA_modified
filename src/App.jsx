@@ -1,3 +1,4 @@
+import InteractiveMap from './components/InteractiveMap';
 import { useState, useEffect } from "react";
 import "./App.css";
 import locationData from "./locationData";
@@ -172,7 +173,11 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
+  // ---> PASTE IT RIGHT HERE <---
+  const [detectedLocation, setDetectedLocation] = useState({ district: '', pin: '' });
+
   const [formData, setFormData] = useState({
+    // ... the rest of your formData continues here
     business_name: "किसान डेयरी फार्म (Kisan Dairy Farm)",
     category: "Dairy",
     state: "Uttar Pradesh",
@@ -610,6 +615,13 @@ function App() {
         {/* If NO result, show the friendly Input Form */}
         {!result ? (
           <section className="form-section">
+            <InteractiveMap 
+              onLocationFound={(district, pin) => {
+                setDetectedLocation({ district, pin });
+                console.log("Location saved to form state:", district, pin);
+              }} 
+            />
+            
             <div className="section-heading">
               <div className="heading-content">
                 <h2>{t.formHeading}</h2>
