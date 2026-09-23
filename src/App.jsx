@@ -423,7 +423,7 @@ function App() {
     return "";
   };
 
-  const handleSubmit = async (e) => {
+ const handleSubmit = async (e) => {
     e.preventDefault();
     const validationError = validateForm();
     if (validationError) {
@@ -435,15 +435,21 @@ function App() {
     setError("");
 
     try {
-      // Analyze using advisor logic
       const selectedOrTypedLocation = formData.block.trim();
+      
+      // --> NEW: Use detected map data if available, otherwise fall back to form inputs
+      const finalDistrict = detectedLocation.district || formData.district;
+      const finalPin = detectedLocation.pin || "";
+
+      // Analyze using local advisor logic
       const analysisOutput = analyzeBusiness({
         business_name: formData.business_name.trim(),
         category: formData.category,
         state: formData.state,
-        district: formData.district,
+        district: finalDistrict, // Inject map district
         block: selectedOrTypedLocation,
         location: selectedOrTypedLocation,
+        pin: finalPin, // Inject map PIN
         experience: formData.experience,
         investment: Number(formData.investment),
         monthly_revenue: Number(formData.monthly_revenue),
@@ -451,6 +457,8 @@ function App() {
       });
 
       let finalOutput = analysisOutput;
+      
+      // Send the complete data package to the Node.js backend
       try {
         const apiRes = await fetch("/api/analyze", {
           method: "POST",
@@ -459,10 +467,11 @@ function App() {
             business_name: formData.business_name.trim(),
             category: formData.category,
             state: formData.state,
-            district: formData.district,
+            district: finalDistrict, // Inject map district
             block: selectedOrTypedLocation,
             location: selectedOrTypedLocation,
             village: formData.location.trim(),
+            pin: finalPin, // Inject map PIN
             experience: formData.experience,
             investment: Number(formData.investment),
             monthly_revenue: Number(formData.monthly_revenue),

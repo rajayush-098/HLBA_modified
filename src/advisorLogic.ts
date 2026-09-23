@@ -7,6 +7,7 @@ export interface BusinessRequest {
   district: string;
   block: string;
   location: string;
+  pin?: string;
   experience: string;
   investment: number;
   monthly_revenue: number;
@@ -418,9 +419,9 @@ export function analyzeBusiness(data: BusinessRequest) {
 
   // HYPER-LOCAL MARKET ANALYSIS
   const category = (data.category || '').toLowerCase();
-  const localDemand = ['dairy', 'agriculture', 'poultry', 'fishery'].includes(category)
-    ? 'High'
-    : 'Medium';
+  const localDemand: string = ['dairy', 'agriculture', 'poultry', 'fishery'].includes(category)
+  ? 'High'
+  : 'Medium';
 
   let competitionLevel = 'Medium';
   if (['retail', 'service'].includes(category)) {

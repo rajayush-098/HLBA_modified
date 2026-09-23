@@ -156,6 +156,9 @@ ${contextStr}`;
       const district = req.body?.district || result.district || "Meerut";
       const tehsil = req.body?.block || req.body?.location || "Meerut";
       const radiusKm = req.body?.radius_km || req.body?.radiusKm || 5;
+      
+      // --> NEW: Grab the PIN code from the React frontend
+      const pin = req.body?.pin || "Unknown PIN";
 
       const hyperLocalData = getTehsilMarketReach(district, tehsil, Number(radiusKm)) || {
         radius_km: 5,
@@ -198,7 +201,7 @@ ${contextStr}`;
 
       if (result.scheme_analysis) {
         result.scheme_analysis.scheme_name = schemeRoute;
-        result.scheme_analysis.description = schemeDetails;
+        (result.scheme_analysis as any).description = schemeDetails;
       }
 
       if (district && district.toLowerCase() === "meerut") {
@@ -220,7 +223,8 @@ ${contextStr}`;
         }
       }
 
-      const prompt = `You are an expert rural micro-enterprise consultant for the Government of India. The user wants to start a ${business_category} business in ${location}, ${district}.
+      // --> NEW: Added PIN to the Gemini prompt for hyper-local accuracy
+      const prompt = `You are an expert rural micro-enterprise consultant for the Government of India. The user wants to start a ${business_category} business in ${location}, ${district} (PIN Code: ${pin}).
 FINANCIALS: Project Cost: ₹${projectCost}, Recommended Scheme: ${schemeRoute}. 
 LOCAL MARKET DATA (DO NOT HALLUCINATE): 5km Reach: ${hyperLocalData.reachable_consumers} consumers. Zone Type: ${hyperLocalData.zone_classification}. Local Bottlenecks: ${Array.isArray(hyperLocalData.district_bottlenecks) ? hyperLocalData.district_bottlenecks.join("; ") : hyperLocalData.district_bottlenecks}.
 Generate a strict 6-point Business Feasibility Report covering: 1. 5-10 km Market Catchment 2. Opportunity & Underserved Niche 3. Localized SWOT Analysis 4. Ground-Level Risk & Bottleneck Mapping 5. Competitor Density 6. Pricing Power & Unit Economics.`;
