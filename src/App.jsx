@@ -184,6 +184,7 @@ function App() {
     district: "Meerut",
     block: "Sardhana",
     location: "Sardhana",
+    pin: "",
     experience: "Beginner",
     investment: "100000",
     monthly_revenue: "45000",
@@ -439,7 +440,7 @@ function App() {
       
       // --> NEW: Use detected map data if available, otherwise fall back to form inputs
       const finalDistrict = detectedLocation.district || formData.district;
-      const finalPin = detectedLocation.pin || "";
+      const finalPin = detectedLocation.pin || formData.pin || "";
 
       // Analyze using local advisor logic
       const analysisOutput = analyzeBusiness({
@@ -488,6 +489,7 @@ function App() {
 
       setResult({
         ...finalOutput,
+        pin: finalPin,
         monthly_revenue: Number(formData.monthly_revenue),
         monthly_expenses: Number(formData.monthly_expenses),
         investment: Number(formData.investment),
@@ -621,13 +623,26 @@ function App() {
 
       {/* ================= MAIN CONTAINER ================= */}
       <main className="container">
-        {/* If NO result, show the friendly Input Form */}
         {!result ? (
-          <section className="form-section">
+      <section className="form-section">
             <InteractiveMap 
-              onLocationFound={(district, pin) => {
-                setDetectedLocation({ district, pin });
-                console.log("Location saved to form state:", district, pin);
+              onLocationFound={(mapState, mapDistrict, mapPin, mapBlock) => {
+                setDetectedLocation({ district: mapDistrict, pin: mapPin });
+
+                // Clean up any extra words the map API adds
+                const cleanDistrict = mapDistrict ? mapDistrict.replace(/\s+district$/i, "").trim() : "";
+                const cleanBlock = mapBlock ? mapBlock.replace(/\s+(tehsil|taluka|block)$/i, "").trim() : "";
+
+                // Instantly override the form fields with the live location
+                setFormData((prev) => ({
+                  ...prev,
+                  state: mapState || prev.state,
+                  district: cleanDistrict || prev.district,
+                  block: cleanBlock || prev.block,
+                  location: cleanBlock || prev.location,
+                }));
+                
+                console.log("Form auto-filled with:", mapState, cleanDistrict, cleanBlock, mapPin);
               }} 
             />
             
@@ -750,6 +765,23 @@ function App() {
                 <div className="input-group">
                   <label htmlFor="district">
                     {t.district} <span className="req">*</span>
+                    {(detectedLocation.pin || formData.pin) && (
+                      <span
+                        style={{
+                          marginLeft: "8px",
+                          fontSize: "11px",
+                          fontWeight: "600",
+                          padding: "2px 8px",
+                          backgroundColor: "#e0f2fe",
+                          color: "#0369a1",
+                          borderRadius: "12px",
+                          border: "1px solid #bae6fd",
+                          display: "inline-block",
+                        }}
+                      >
+                        PIN: {detectedLocation.pin || formData.pin}
+                      </span>
+                    )}
                   </label>
                   <select
                     id="district"

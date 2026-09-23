@@ -5,11 +5,21 @@ import { GoogleGenAI } from "@google/genai";
 import { handleAdvisor, handleAnalyze } from "./src/advisorLogic";
 import { MEERUT_DATA, getTehsilMarketReach } from "./locationData";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 let genAIClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
-  return ai;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+  if (!genAIClient) {
+    try {
+      genAIClient = new GoogleGenAI({ apiKey });
+    } catch (err) {
+      console.error("Failed to initialize GoogleGenAI client:", err);
+      return null;
+    }
+  }
+  return genAIClient;
 }
 
 async function startServer() {
@@ -227,18 +237,25 @@ ${contextStr}`;
       const prompt = `You are an expert rural micro-enterprise consultant for the Government of India. The user wants to start a ${business_category} business in ${location}, ${district} (PIN Code: ${pin}).
 FINANCIALS: Project Cost: ₹${projectCost}, Recommended Scheme: ${schemeRoute}. 
 LOCAL MARKET DATA (DO NOT HALLUCINATE): 5km Reach: ${hyperLocalData.reachable_consumers} consumers. Zone Type: ${hyperLocalData.zone_classification}. Local Bottlenecks: ${Array.isArray(hyperLocalData.district_bottlenecks) ? hyperLocalData.district_bottlenecks.join("; ") : hyperLocalData.district_bottlenecks}.
+You must strictly include "PIN Code: ${pin}" in the main title of the generated feasibility report (e.g., "# Hyper-Local Business Feasibility Report - ${business_category} in ${location}, ${district} (PIN Code: ${pin})").
 Generate a strict 6-point Business Feasibility Report covering: 1. 5-10 km Market Catchment 2. Opportunity & Underserved Niche 3. Localized SWOT Analysis 4. Ground-Level Risk & Bottleneck Mapping 5. Competitor Density 6. Pricing Power & Unit Economics.`;
 
       let feasibility_report = "";
       try {
-        const aiResponse = await ai.models.generateContent({
+        const geminiClient = getGeminiClient();
+        if (!geminiClient) {
+          throw new Error("GEMINI_API_KEY is not configured");
+        }
+        const aiResponse = await geminiClient.models.generateContent({
           model: "gemini-2.5-flash",
           contents: prompt,
         });
         feasibility_report = aiResponse.text || "";
       } catch (geminiErr: any) {
         console.error("Gemini feasibility report error:", geminiErr);
-        feasibility_report = `1. 5-10 km Market Catchment: Primary reach covers ${hyperLocalData.reachable_consumers.toLocaleString("en-IN")} consumers across ${hyperLocalData.zone_classification}.
+        feasibility_report = `Business Feasibility Report - ${business_category} in ${location}, ${district} (PIN Code: ${pin})
+
+1. 5-10 km Market Catchment: Primary reach covers ${hyperLocalData.reachable_consumers.toLocaleString("en-IN")} consumers across ${hyperLocalData.zone_classification}.
 2. Opportunity & Underserved Niche: Unmet demand for local ${business_category} products with value-added processing.
 3. Localized SWOT Analysis: High population density and accessible mandi links offset by initial working capital needs.
 4. Ground-Level Risk & Bottleneck Mapping: Local bottlenecks to navigate: ${Array.isArray(hyperLocalData.district_bottlenecks) ? hyperLocalData.district_bottlenecks.join("; ") : hyperLocalData.district_bottlenecks}.

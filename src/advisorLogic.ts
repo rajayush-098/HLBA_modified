@@ -789,15 +789,17 @@ export function analyzeBusiness(data: BusinessRequest) {
     );
   }
 
-  const hyperLocalRecommendation = `${data.business_name} in ${data.location}, ${data.district}, ${data.state} has ${locationSuitability.toLowerCase()} market suitability. Estimated local demand is ${localDemand.toLowerCase()} with ${competitionLevel.toLowerCase()} competition.`;
+  const districtWithPin = data.pin ? `${data.district} (PIN: ${data.pin})` : data.district;
+  const hyperLocalRecommendation = `${data.business_name} in ${data.location}, ${districtWithPin}, ${data.state} has ${locationSuitability.toLowerCase()} market suitability. Estimated local demand is ${localDemand.toLowerCase()} with ${competitionLevel.toLowerCase()} competition.`;
 
   const hyperLocalProfile = {
     state: data.state,
     district: data.district,
+    pin: data.pin || '',
     block: data.block,
     location: data.location,
     category: data.category,
-    profile_summary: `Business analysis prepared for ${data.business_name} in ${data.location}, ${data.block}, ${data.district}, ${data.state}.`,
+    profile_summary: `Business analysis prepared for ${data.business_name} in ${data.location}, ${data.block}, ${districtWithPin}, ${data.state}.`,
     local_demand: localDemand,
     competition_level: competitionLevel,
     market_potential_score: marketPotentialScore,
@@ -988,6 +990,7 @@ export function analyzeBusiness(data: BusinessRequest) {
     category: data.category,
     state: data.state,
     district: data.district,
+    pin: data.pin || '',
     block: data.block,
     location: data.location,
     experience: data.experience,
