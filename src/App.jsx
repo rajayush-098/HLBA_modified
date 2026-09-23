@@ -20,6 +20,7 @@ import PageRisk from "./components/PageRisk";
 import PageAdvisor from "./components/PageAdvisor";
 import PageReportCard from "./components/PageReportCard";
 import SmrityAssistant from "./components/SmrityAssistant";
+import odopData from "./odopData.json";
 
 const PAGES = [
   {
