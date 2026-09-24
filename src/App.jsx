@@ -20,6 +20,7 @@ import PageRisk from "./components/PageRisk";
 import PageAdvisor from "./components/PageAdvisor";
 import PageReportCard from "./components/PageReportCard";
 import SmrityAssistant from "./components/SmrityAssistant";
+// eslint-disable-next-line no-unused-vars
 import odopData from "./odopData.json";
 
 const PAGES = [
@@ -195,47 +196,42 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [tehsilOptions, setTehsilOptions] = useState({
-    has_verified_data: false,
-    tehsils: [],
-  });
+  const [blocksMap, setBlocksMap] = useState({});
 
   const t = translations[lang] || translations.en;
 
-  // Fetch tehsils whenever the district field changes
+  // Fetch Pan-India district blocks dataset on mount
   useEffect(() => {
-    if (!formData.district) return;
-
-    let isCancelled = false;
-    fetch(`/api/locations/tehsils?district=${encodeURIComponent(formData.district)}`)
+    fetch("https://gist.githubusercontent.com/Keshava11/aace79cf260e7955ac1768d3ad6e24bd/raw")
       .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch tehsils");
+        if (!res.ok) throw new Error("Failed to fetch blocks data");
         return res.json();
       })
       .then((data) => {
-        if (!isCancelled) {
-          setTehsilOptions(data || { has_verified_data: false, tehsils: [] });
-        }
+        if (!Array.isArray(data)) return;
+        const mapped = {};
+        data.forEach((districtObj) => {
+          if (districtObj && districtObj.name) {
+            const key = districtObj.name.toLowerCase().trim();
+            const blocks = Array.isArray(districtObj.blockList)
+              ? districtObj.blockList.map((b) => {
+                  const name = typeof b === "string" ? b : (b.name || "");
+                  return name
+                    .toLowerCase()
+                    .split(" ")
+                    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(" ");
+                })
+              : [];
+            mapped[key] = blocks;
+          }
+        });
+        setBlocksMap(mapped);
       })
       .catch((err) => {
-        console.warn("Tehsil fetch fallback:", err);
-        if (!isCancelled) {
-          if (formData.district.toLowerCase() === "meerut") {
-            setTehsilOptions({
-              district: "Meerut",
-              has_verified_data: true,
-              tehsils: ["Meerut", "Sardhana", "Mawana"],
-            });
-          } else {
-            setTehsilOptions({ has_verified_data: false, tehsils: [] });
-          }
-        }
+        console.warn("Error fetching blocks dataset:", err);
       });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [formData.district]);
+  }, []);
 
   // Cleanup speech synthesis on unmount
   useEffect(() => {
@@ -261,7 +257,6 @@ function App() {
     setError("");
 
     if (name === "state") {
-      setTehsilOptions({ has_verified_data: false, tehsils: [] });
       setFormData((prev) => ({
         ...prev,
         state: value,
@@ -273,7 +268,6 @@ function App() {
     }
 
     if (name === "district") {
-      setTehsilOptions({ has_verified_data: false, tehsils: [] });
       setFormData((prev) => ({
         ...prev,
         district: value,
@@ -287,7 +281,6 @@ function App() {
       setFormData((prev) => ({
         ...prev,
         block: value,
-        location: value,
       }));
       return;
     }
@@ -392,8 +385,8 @@ function App() {
     }
     if (!formData.block.trim()) {
       return lang === "hi"
-        ? (tehsilOptions?.has_verified_data ? "कृपया अनिवार्य अधिकृत तहसील चुनें।" : "कृपया अपने ब्लॉक या तहसील का नाम लिखें।")
-        : (tehsilOptions?.has_verified_data ? "Please select a mandatory tehsil from the list." : "Please enter your block or tehsil name.");
+        ? "कृपया अपने ब्लॉक या तहसील का नाम चुनें/लिखें।"
+        : "Please select or enter your block/tehsil.";
     }
     const finalLocation = formData.location.trim() || formData.block.trim();
     if (!finalLocation) {
@@ -450,7 +443,7 @@ function App() {
         state: formData.state,
         district: finalDistrict, // Inject map district
         block: selectedOrTypedLocation,
-        location: selectedOrTypedLocation,
+        location: formData.location.trim() || selectedOrTypedLocation,
         pin: finalPin, // Inject map PIN
         experience: formData.experience,
         investment: Number(formData.investment),
@@ -471,7 +464,7 @@ function App() {
             state: formData.state,
             district: finalDistrict, // Inject map district
             block: selectedOrTypedLocation,
-            location: selectedOrTypedLocation,
+            location: formData.location.trim() || selectedOrTypedLocation,
             village: formData.location.trim(),
             pin: finalPin, // Inject map PIN
             experience: formData.experience,
@@ -640,7 +633,6 @@ function App() {
                   state: mapState || prev.state,
                   district: cleanDistrict || prev.district,
                   block: cleanBlock || prev.block,
-                  location: cleanBlock || prev.location,
                 }));
                 
                 console.log("Form auto-filled with:", mapState, cleanDistrict, cleanBlock, mapPin);
@@ -807,61 +799,43 @@ function App() {
                 <div className="input-group">
                   <label htmlFor="block">
                     {t.block} <span className="req">*</span>
-                    {tehsilOptions?.has_verified_data && (
-                      <span
-                        style={{
-                          marginLeft: "8px",
-                          fontSize: "11px",
-                          fontWeight: "600",
-                          padding: "2px 8px",
-                          backgroundColor: "#dcfce7",
-                          color: "#166534",
-                          borderRadius: "12px",
-                          border: "1px solid #86efac",
-                          display: "inline-block",
-                        }}
-                      >
-                        ✓ {lang === "hi" ? "सत्यापित तहसीलें" : "Verified Pilot Tehsils"}
-                      </span>
-                    )}
                   </label>
-                  {tehsilOptions?.has_verified_data ? (
-                    <select
-                      id="block"
-                      name="block"
-                      value={formData.block}
-                      onChange={handleChange}
-                      required
-                    >
-                      <option value="">
-                        {lang === "hi"
-                          ? "-- अनिवार्य: अधिकृत तहसील चुनें --"
-                          : "-- Mandatory: Select Tehsil --"}
-                      </option>
-                      {tehsilOptions.tehsils?.map((tehsil) => (
-                        <option key={tehsil} value={tehsil}>
-                          {tehsil}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      id="block"
-                      type="text"
-                      name="block"
-                      placeholder={t.blockPlaceholder}
-                      value={formData.block}
-                      onChange={handleChange}
-                      required
-                    />
-                  )}
-                  {tehsilOptions?.has_verified_data && (
-                    <small className="input-help-text" style={{ color: "#15803d" }}>
-                      {lang === "hi"
-                        ? "मेरठ जिले के लिए सत्यापित जनसांख्यिकी डेटा उपलब्ध है। सूची से तहसील चुनना अनिवार्य है।"
-                        : "Verified hyper-local census dataset active for Meerut. Selecting a tehsil from the list is mandatory."}
-                    </small>
-                  )}
+                  {(() => {
+                    const districtKey = formData.district ? formData.district.toLowerCase().trim() : "";
+                    const districtBlocks = districtKey && blocksMap[districtKey] ? blocksMap[districtKey] : null;
+
+                    if (districtBlocks && districtBlocks.length > 0) {
+                      const sortedBlocks = [...districtBlocks].sort((a, b) => a.localeCompare(b));
+                      return (
+                        <select
+                          id="block"
+                          name="block"
+                          value={formData.block}
+                          onChange={handleChange}
+                          required
+                        >
+                          <option value="">-- Select Block/Tehsil --</option>
+                          {sortedBlocks.map((blk) => (
+                            <option key={blk} value={blk}>
+                              {blk}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    }
+
+                    return (
+                      <input
+                        id="block"
+                        type="text"
+                        name="block"
+                        placeholder={t.blockPlaceholder}
+                        value={formData.block}
+                        onChange={handleChange}
+                        required
+                      />
+                    );
+                  })()}
                 </div>
 
                 {/* LOCATION */}
