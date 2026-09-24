@@ -166,17 +166,17 @@ export default function PageMarket({ result, lang }) {
         </div>
       </div>
 
-      {/* Gemini 6-Point Feasibility Report */}
-      {result.feasibility_report && (
+      {/* Local Market Summary */}
+      {(result.market_summary || result.feasibility_report) && (
         <div style={{ marginTop: "24px", padding: "18px 20px", background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
             <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: "#2563eb" }}></span>
             <h4 style={{ margin: 0, fontSize: "16px", fontWeight: "700", color: "#0f172a" }}>
-              {isHi ? "AI व्यापार व्यवहार्यता रिपोर्ट (सरकारी सलाहकार मूल्यांकन)" : "Gemini 6-Point Business Feasibility Report"}
+              {isHi ? "स्थानीय बाज़ार सलाह (Market Summary)" : "Local Market Advisory Summary"}
             </h4>
           </div>
-          <div style={{ fontSize: "13.5px", lineHeight: "1.7", color: "#334155", whiteSpace: "pre-line", background: "#f8fafc", padding: "14px 16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-            {result.feasibility_report}
+          <div style={{ fontSize: "14px", lineHeight: "1.7", color: "#334155", background: "#f8fafc", padding: "14px 16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            {result.market_summary || result.feasibility_report}
           </div>
         </div>
       )}

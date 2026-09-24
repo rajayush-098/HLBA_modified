@@ -188,15 +188,15 @@ export default function PageReportCard({ result, lang, formatCurrency }) {
           </tbody>
         </table>
 
-        {/* Gemini 6-Point Feasibility Report */}
-        {result.feasibility_report && (
+        {/* Local Market Advisory Summary */}
+        {(result.market_summary || result.feasibility_report) && (
           <div className="parcha-feasibility-report" style={{ marginTop: "16px", padding: "14px", backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
             <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", fontWeight: "700", color: "#1e293b", display: "flex", alignItems: "center", gap: "6px" }}>
               <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#2563eb" }}></span>
-              {isHi ? "AI व्यापार व्यवहार्यता रिपोर्ट (6-सूत्रीय सरकारी मूल्यांकन)" : "Gemini 6-Point Business Feasibility Report"}
+              {isHi ? "स्थानीय बाज़ार सलाह (Market Summary)" : "Local Market Advisory Summary"}
             </h4>
-            <div style={{ fontSize: "12px", lineHeight: "1.6", color: "#334155", whiteSpace: "pre-line" }}>
-              {result.feasibility_report}
+            <div style={{ fontSize: "12.5px", lineHeight: "1.6", color: "#334155" }}>
+              {result.market_summary || result.feasibility_report}
             </div>
           </div>
         )}

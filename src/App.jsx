@@ -179,7 +179,7 @@ function App() {
   const [detectedLocation, setDetectedLocation] = useState({ district: '', pin: '' });
 
   const [formData, setFormData] = useState({
-    // ... the rest of your formData continues here
+    udyam_number: "",
     business_name: "किसान डेयरी फार्म (Kisan Dairy Farm)",
     category: "Dairy",
     state: "Uttar Pradesh",
@@ -197,8 +197,71 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [blocksMap, setBlocksMap] = useState({});
+  const [udyamLoading, setUdyamLoading] = useState(false);
+  const [udyamStatus, setUdyamStatus] = useState(null);
 
   const t = translations[lang] || translations.en;
+
+  // Handle Udyam Verification & Auto-fill
+  const handleVerifyUdyam = async () => {
+    if (!formData.udyam_number || !formData.udyam_number.trim()) {
+      setError(
+        lang === "hi"
+          ? "कृपया पहले उद्यम रजिस्ट्रेशन नंबर दर्ज करें।"
+          : "Please enter your Udyam Registration Number first."
+      );
+      return;
+    }
+
+    setUdyamLoading(true);
+    setUdyamStatus(null);
+    setError("");
+
+    try {
+      const res = await fetch("/api/verify-udyam", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ udyamNumber: formData.udyam_number.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to verify Udyam registration");
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        business_name: data.enterpriseName || prev.business_name,
+        state: data.state || prev.state,
+        district: data.district || prev.district,
+        pin: data.pincode || prev.pin,
+      }));
+
+      if (data.district) {
+        setDetectedLocation((prev) => ({
+          ...prev,
+          district: data.district,
+          pin: data.pincode || prev.pin,
+        }));
+      }
+
+      setUdyamStatus({
+        type: "success",
+        message:
+          lang === "hi"
+            ? `सफलतापूर्वक सत्यापित! ${data.enterpriseName} का विवरण भर दिया गया है।`
+            : `Verified successfully! Details auto-filled for ${data.enterpriseName}.`,
+      });
+    } catch (err) {
+      console.error("Udyam verification failed:", err);
+      setUdyamStatus({
+        type: "error",
+        message: err?.message || "Failed to verify Udyam registration number.",
+      });
+    } finally {
+      setUdyamLoading(false);
+    }
+  };
 
   // Fetch Pan-India district blocks dataset on mount
   useEffect(() => {
@@ -690,6 +753,79 @@ function App() {
 
             <form onSubmit={handleSubmit} noValidate>
               <div className="form-grid">
+                {/* UDYAM REGISTRATION NUMBER (OPTIONAL) */}
+                <div className="input-group" style={{ gridColumn: "1 / -1" }}>
+                  <label htmlFor="udyam_number">
+                    {lang === "hi"
+                      ? "उद्यम रजिस्ट्रेशन नंबर (वैकल्पिक / Optional)"
+                      : "Udyam Registration Number (Optional)"}
+                  </label>
+                  <div style={{ display: "flex", gap: "10px", alignItems: "stretch", flexWrap: "wrap" }}>
+                    <input
+                      id="udyam_number"
+                      type="text"
+                      name="udyam_number"
+                      placeholder="e.g. UDYAM-UP-48-0012345"
+                      value={formData.udyam_number}
+                      onChange={handleChange}
+                      style={{ flex: "1 1 240px", minWidth: "220px" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleVerifyUdyam}
+                      disabled={udyamLoading}
+                      style={{
+                        padding: "0 22px",
+                        height: "48px",
+                        backgroundColor: "#15573f",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: "8px",
+                        fontWeight: 600,
+                        fontSize: "14px",
+                        cursor: udyamLoading ? "not-allowed" : "pointer",
+                        opacity: udyamLoading ? 0.7 : 1,
+                        whiteSpace: "nowrap",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        transition: "background-color 0.2s",
+                      }}
+                    >
+                      {udyamLoading
+                        ? lang === "hi"
+                          ? "सत्यापित हो रहा है..."
+                          : "Verifying..."
+                        : "Verify Udyam"}
+                    </button>
+                  </div>
+                  <small className="input-help-text">
+                    {lang === "hi"
+                      ? "अपना उद्यम रजिस्ट्रेशन नंबर दर्ज करें और 'Verify Udyam' दबाकर विवरण स्वतः भरें।"
+                      : "Enter your Udyam Registration Number and click 'Verify Udyam' to auto-fill business details."}
+                  </small>
+                  {udyamStatus && (
+                    <div
+                      style={{
+                        marginTop: "8px",
+                        padding: "8px 12px",
+                        borderRadius: "6px",
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        backgroundColor:
+                          udyamStatus.type === "success" ? "#dcfce7" : "#fee2e2",
+                        color:
+                          udyamStatus.type === "success" ? "#15803d" : "#b91c1c",
+                        border: `1px solid ${
+                          udyamStatus.type === "success" ? "#86efac" : "#fca5a5"
+                        }`,
+                      }}
+                    >
+                      {udyamStatus.message}
+                    </div>
+                  )}
+                </div>
+
                 {/* BUSINESS NAME */}
                 <div className="input-group">
                   <label htmlFor="business_name">
