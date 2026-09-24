@@ -2,6 +2,7 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "allowJs": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

@@ -1,4 +1,5 @@
 import { getTehsilMarketReach } from '../locationData';
+import governmentSchemesData from './government_schemes.json';
 
 export interface BusinessRequest {
   business_name: string;
@@ -12,6 +13,76 @@ export interface BusinessRequest {
   investment: number;
   monthly_revenue: number;
   monthly_expenses: number;
+}
+
+export function matchGovernmentScheme(category: string, investment: number) {
+  const schemes = governmentSchemesData?.schemes || [];
+  const cleanCat = (category || '').toLowerCase().trim();
+  const numInvestment = Number(investment) || 0;
+
+  // Filter schemes where category matches one of preferred_categories AND investment <= max_project_cost
+  const eligibleSchemes = schemes.filter((scheme: any) => {
+    const rules = scheme.matching_rules || {};
+    const preferred = (rules.preferred_categories || []).map((c: string) => c.toLowerCase().trim());
+
+    const categoryMatches = preferred.some((p: string) => {
+      if (cleanCat === p) return true;
+      if (cleanCat.includes(p) || p.includes(cleanCat)) return true;
+      if (cleanCat === 'fishery' && (p === 'fisheries' || p === 'fish' || p === 'aquaculture')) return true;
+      if (cleanCat === 'retail' && (p === 'trading' || p === 'business' || p === 'vendor' || p === 'street vendor')) return true;
+      if (cleanCat === 'service' && p === 'services') return true;
+      return false;
+    });
+
+    if (!categoryMatches) return false;
+
+    if (rules.max_project_cost !== undefined && rules.max_project_cost !== null) {
+      if (numInvestment > rules.max_project_cost) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  if (eligibleSchemes.length > 0) {
+    return eligibleSchemes[0];
+  }
+
+  // Fallback to PMMY (MUDRA) or first scheme
+  return schemes.find((s: any) => s.scheme_id === 'PMMY') || schemes[0];
+}
+
+export function getAllMatchingSchemes(category: string, investment: number) {
+  const schemes = governmentSchemesData?.schemes || [];
+  const cleanCat = (category || '').toLowerCase().trim();
+  const numInvestment = Number(investment) || 0;
+
+  const matches = schemes.filter((scheme: any) => {
+    const rules = scheme.matching_rules || {};
+    const preferred = (rules.preferred_categories || []).map((c: string) => c.toLowerCase().trim());
+
+    const categoryMatches = preferred.some((p: string) => {
+      if (cleanCat === p) return true;
+      if (cleanCat.includes(p) || p.includes(cleanCat)) return true;
+      if (cleanCat === 'fishery' && (p === 'fisheries' || p === 'fish' || p === 'aquaculture')) return true;
+      if (cleanCat === 'retail' && (p === 'trading' || p === 'business')) return true;
+      if (cleanCat === 'service' && p === 'services') return true;
+      return false;
+    });
+
+    if (!categoryMatches) return false;
+
+    if (rules.max_project_cost !== undefined && rules.max_project_cost !== null) {
+      if (numInvestment > rules.max_project_cost) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return matches.length > 0 ? matches : [matchGovernmentScheme(category, investment)];
 }
 
 export interface AdvisorRequest {
@@ -214,42 +285,29 @@ export function analyzeBusiness(data: BusinessRequest) {
     feasibility = 'Moderately Feasible';
   }
 
-  // STEP 5: GOVERNMENT LOAN SCHEME ANALYSIS
+  // STEP 5: GOVERNMENT LOAN SCHEME ANALYSIS (Dynamic matching using government_schemes.json)
   const marginCapital = investment;
   const projectCost = marginCapital / 0.1;
   const maximumLoan = projectCost * 0.9;
   const beneficiaryContribution = marginCapital;
+
+  const matchedScheme = matchGovernmentScheme(data.category, investment);
+  const matchedAllSchemes = getAllMatchingSchemes(data.category, investment);
+
   let eligibleLoan = maximumLoan;
-
-  let schemeName = 'Not Eligible';
-  let schemeMessage = 'No suitable scheme found.';
-  let interestRate: number | null = null;
-  let repaymentPeriod: string | null = null;
-  let loanTenureMonths: number | null = null;
-  let moratoriumMonths = 0;
-  let repaymentMonths: number | null = null;
-
-  if (projectCost <= 140000) {
-    schemeName = 'Micro Finance Scheme';
-    eligibleLoan = Math.min(eligibleLoan, 125000);
-    interestRate = 6.5;
-    repaymentPeriod = '3 years including 3-month moratorium';
-    loanTenureMonths = 36;
-    moratoriumMonths = 3;
-    schemeMessage = 'Eligible for the Micro Finance Scheme.';
-  } else if (projectCost <= 5000000) {
-    schemeName = 'Term Loan Scheme';
-    eligibleLoan = Math.min(eligibleLoan, 4500000);
-    interestRate = 8.0;
-    repaymentPeriod = '7 years including 6-month moratorium';
-    loanTenureMonths = 84;
-    moratoriumMonths = 6;
-    schemeMessage = 'Eligible for the Term Loan Scheme.';
-  } else {
-    schemeName = 'Above Standard Scheme Limit';
-    eligibleLoan = 0;
-    schemeMessage = 'Project cost is above ₹50 lakh. Check other financing options.';
+  if (matchedScheme?.loan?.maximum_loan != null && matchedScheme.loan.maximum_loan > 0) {
+    eligibleLoan = Math.min(eligibleLoan, matchedScheme.loan.maximum_loan);
   }
+
+  const schemeName = matchedScheme?.scheme_name || 'Pradhan Mantri MUDRA Yojana';
+  const schemeMessage = `Eligible for ${matchedScheme?.short_name || schemeName} (${matchedScheme?.category || 'Central Government Scheme'}).`;
+
+  // If the matched scheme contains a specific interest_rate (like 5% for PM Vishwakarma), use it. If null, fall back to a default of 9%.
+  const interestRate: number = matchedScheme?.loan?.interest_rate != null ? matchedScheme.loan.interest_rate : 9;
+  const repaymentPeriod: string = matchedScheme?.loan?.repayment || '5 years including 3-month moratorium';
+  const loanTenureMonths = 60;
+  const moratoriumMonths = 3;
+  let repaymentMonths: number | null = null;
 
   // STEP 6: EMI + LOAN AFFORDABILITY + MORATORIUM
   let monthlyEmi: number | null = null;
@@ -380,42 +438,32 @@ export function analyzeBusiness(data: BusinessRequest) {
     }
   }
 
-  // STEP 7: SMART SCHEME MATCHING
-  const matchingSchemes = [];
-  if (projectCost <= 140000) {
-    matchingSchemes.push({
-      scheme_name: 'Micro Finance Scheme',
-      project_cost_limit: 'Up to ₹1.40 lakh',
-      maximum_loan: 125000,
-      eligible_loan: Math.round(Math.min(maximumLoan, 125000) * 100) / 100,
-      interest_rate: 6.5,
-      repayment_period: '3 years including 3-month moratorium',
-      moratorium_months: 3,
-      match_score: 95,
-      reason: 'Project cost falls within the Micro Finance Scheme limit.',
-    });
-  } else if (projectCost <= 5000000) {
-    matchingSchemes.push({
-      scheme_name: 'Term Loan Scheme',
-      project_cost_limit: '₹1.40 lakh to ₹50 lakh',
-      maximum_loan: 4500000,
-      eligible_loan: Math.round(Math.min(maximumLoan, 4500000) * 100) / 100,
-      interest_rate: 8.0,
-      repayment_period: '7 years including 6-month moratorium',
-      moratorium_months: 6,
-      match_score: 95,
-      reason: 'Project cost falls within the Term Loan Scheme limit.',
-    });
-  }
+  // STEP 7: SMART SCHEME MATCHING (Dynamic from government_schemes.json)
+  const matchingSchemes = matchedAllSchemes.map((s: any) => ({
+    scheme_id: s.scheme_id,
+    scheme_name: s.scheme_name,
+    short_name: s.short_name,
+    category: s.category,
+    ministry: s.ministry,
+    project_cost_limit: s.matching_rules?.max_project_cost
+      ? `Up to ₹${(s.matching_rules.max_project_cost / 100000).toFixed(1)} Lakh`
+      : 'Subject to project viability',
+    maximum_loan: s.loan?.maximum_loan || maximumLoan,
+    eligible_loan: Math.round(Math.min(maximumLoan, s.loan?.maximum_loan || maximumLoan) * 100) / 100,
+    interest_rate: s.loan?.interest_rate != null ? s.loan.interest_rate : 9,
+    repayment_period: s.loan?.repayment || '3 to 7 years',
+    moratorium_months: 3,
+    match_score: s.scheme_id === matchedScheme?.scheme_id ? 98 : 85,
+    reason: `Aligned with ${data.category} enterprises and initial capital of ₹${investment.toLocaleString('en-IN')}.`,
+  }));
 
-  const recommendedScheme =
-    matchingSchemes.length > 0
-      ? matchingSchemes.reduce((prev, curr) => (curr.match_score > prev.match_score ? curr : prev))
-      : {
-          scheme_name: 'No Standard Scheme Match',
-          match_score: 0,
-          reason: 'No standard scheme match found.',
-        };
+  const recommendedScheme = matchingSchemes.length > 0
+    ? matchingSchemes.reduce((prev: any, curr: any) => (curr.match_score > prev.match_score ? curr : prev))
+    : {
+        scheme_name: schemeName,
+        match_score: 95,
+        reason: schemeMessage,
+      };
 
   // HYPER-LOCAL MARKET ANALYSIS
   const category = (data.category || '').toLowerCase();
@@ -996,6 +1044,7 @@ export function analyzeBusiness(data: BusinessRequest) {
     experience: data.experience,
     hyper_local_profile: hyperLocalProfile,
     risk_analysis: riskAnalysis,
+    matched_scheme: matchedScheme,
     financial_analysis: {
       initial_investment: Math.round(investment * 100) / 100,
       monthly_revenue: Math.round(monthlyRevenue * 100) / 100,

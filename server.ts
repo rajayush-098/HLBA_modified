@@ -173,31 +173,9 @@ ${contextStr}`;
         result.scheme_analysis?.project_cost ||
         (Number(req.body?.investment || 100000) / 0.1);
 
-      const category = String(business_category).toLowerCase();
-      let schemeRoute = "";
-      let schemeDetails = "";
-
-      // 1. Check for Agriculture / Farming first (Excluded from MUDRA/PMEGP)
-      if (category.includes("farm") || category.includes("agriculture") || category.includes("crop") || category.includes("dairy")) {
-          schemeRoute = "Kisan Credit Card (KCC) / Animal Husbandry Infrastructure Development Fund (AHIDF)";
-          schemeDetails = "MUDRA does not cover direct farming. KCC provides short-term credit for agriculture/dairy at ~4% interest (with prompt repayment). AHIDF supports dairy/meat processing infrastructure.";
-      } 
-      // 2. Standard Non-Farm Micro/Small Business Routing
-      else {
-          if (projectCost <= 50000) {
-              schemeRoute = "MUDRA Yojana - Shishu";
-              schemeDetails = "Up to ₹50,000. Collateral-free. Ideal for micro-shops, vendors, and starting village industries. Interest rate ~8-12%.";
-          } else if (projectCost <= 500000) {
-              schemeRoute = "MUDRA Yojana - Kishore";
-              schemeDetails = "₹50,001 to ₹5 Lakh. Collateral-free. Designed for buying equipment, inventory, or initial expansion. Interest rate ~8.6-11%.";
-          } else if (projectCost <= 1000000) {
-              schemeRoute = "MUDRA Yojana - Tarun";
-              schemeDetails = "₹5 Lakh to ₹10 Lakh. Collateral-free. For established micro-units scaling up operations. Interest rate ~11-12%.";
-          } else {
-              schemeRoute = "PMEGP (Prime Minister's Employment Generation Programme)";
-              schemeDetails = "Up to ₹50 Lakh (Manufacturing) / ₹20 Lakh (Service). Provides 15-35% margin money subsidy. Must be a new project.";
-          }
-      }
+      const matchedScheme = (result as any).matched_scheme;
+      const schemeRoute = matchedScheme?.scheme_name || result.scheme_analysis?.scheme_name || "Pradhan Mantri MUDRA Yojana";
+      const schemeDetails = matchedScheme?.category || (result.scheme_analysis as any)?.description || "Official government credit & subsidy scheme";
 
       if (result.scheme_analysis) {
         result.scheme_analysis.scheme_name = schemeRoute;
