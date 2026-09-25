@@ -10,15 +10,18 @@ export function speakText(text, lang = "hi-IN") {
     const utterance = new SpeechSynthesisUtterance(text);
     // Try to find matching voice
     const voices = window.speechSynthesis.getVoices();
-    if (lang.startsWith("hi")) {
-      const hindiVoice = voices.find((v) => v.lang.includes("hi") || v.lang.includes("IN"));
-      if (hindiVoice) utterance.voice = hindiVoice;
-      utterance.lang = "hi-IN";
-    } else {
-      const enVoice = voices.find((v) => v.lang.includes("en-IN") || v.lang.includes("en"));
-      if (enVoice) utterance.voice = enVoice;
-      utterance.lang = "en-IN";
-    }
+    const cleanLang = (lang || "").toLowerCase();
+    let targetLocale = "hi-IN";
+    if (cleanLang.startsWith("mr")) targetLocale = "mr-IN";
+    else if (cleanLang.startsWith("bn")) targetLocale = "bn-IN";
+    else if (cleanLang.startsWith("te")) targetLocale = "te-IN";
+    else if (cleanLang.startsWith("ta")) targetLocale = "ta-IN";
+    else if (cleanLang.startsWith("en")) targetLocale = "en-IN";
+    else targetLocale = "hi-IN";
+
+    const matchedVoice = voices.find((v) => v.lang.toLowerCase().includes(targetLocale.slice(0, 2)) || v.lang.toLowerCase().includes(targetLocale.toLowerCase()));
+    if (matchedVoice) utterance.voice = matchedVoice;
+    utterance.lang = targetLocale;
     utterance.rate = 0.95; // slightly slower for better comprehension
     utterance.pitch = 1.0;
     window.speechSynthesis.speak(utterance);

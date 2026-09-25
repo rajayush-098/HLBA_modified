@@ -1,4 +1,4 @@
-export default function PageMarket({ result, lang }) {
+export default function PageMarket({ result, lang, formData }) {
   const isHi = lang === "hi";
 
   const market = result.hyper_local_profile ?? {};
@@ -12,6 +12,14 @@ export default function PageMarket({ result, lang }) {
     "Direct Farm / Shop Pickup",
     "Supply to Nearest Kasba / Tehsil Mandi",
   ];
+
+  // Dynamically construct searchQuery using existing formData, fallback to India
+  const targetBlock = (formData?.block || result?.block || "").trim();
+  const targetDistrict = (formData?.district || result?.district || "").trim();
+  const searchQuery =
+    targetBlock || targetDistrict
+      ? `${targetBlock ? targetBlock + ", " : ""}${targetDistrict ? targetDistrict + ", " : ""}India`
+      : "India";
 
   return (
     <div className="side-page-content">
@@ -31,6 +39,38 @@ export default function PageMarket({ result, lang }) {
               : "Hyper-local customer reach, competing shops, and demand strength across a 5-10 km radius."}
           </p>
         </div>
+      </div>
+
+      {/* Responsive Local Area Google Map */}
+      <div
+        className="w-full h-48 sm:h-56 rounded-xl shadow-sm overflow-hidden mb-6"
+        style={{
+          width: "100%",
+          height: "220px",
+          borderRadius: "16px",
+          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.08)",
+          overflow: "hidden",
+          marginBottom: "24px",
+          border: 0,
+          backgroundColor: "#f1f5f9",
+          position: "relative",
+        }}
+      >
+        <iframe
+          title="Local Area Market Map"
+          src={`https://maps.google.com/maps?q=${encodeURIComponent(searchQuery)}&output=embed`}
+          className="w-full h-full rounded-xl border-0"
+          style={{
+            width: "100%",
+            height: "100%",
+            border: 0,
+            borderRadius: "16px",
+            display: "block",
+          }}
+          loading="lazy"
+          allowFullScreen
+          referrerPolicy="no-referrer-when-downgrade"
+        />
       </div>
 
       {/* 4 Market Highlight Cards */}

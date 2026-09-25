@@ -785,6 +785,33 @@ button {
   max-width: 380px;
 }
 
+/* Dynamic 5-Tier Feasibility Verdict Tailwind utility classes */
+.bg-green-50 { background-color: #f0fdf4 !important; }
+.text-green-900 { color: #14532d !important; }
+.border-green-200 { border-color: #bbf7d0 !important; }
+
+.bg-blue-50 { background-color: #eff6ff !important; }
+.text-blue-900 { color: #1e3a8a !important; }
+.border-blue-200 { border-color: #bfdbfe !important; }
+
+.bg-yellow-50 { background-color: #fefce8 !important; }
+.text-yellow-900 { color: #713f12 !important; }
+.border-yellow-200 { border-color: #fef08a !important; }
+
+.bg-orange-50 { background-color: #fff7ed !important; }
+.text-orange-900 { color: #7c2d12 !important; }
+.border-orange-200 { border-color: #fed7aa !important; }
+
+.bg-red-50 { background-color: #fef2f2 !important; }
+.text-red-900 { color: #7f1d1d !important; }
+.border-red-200 { border-color: #fecaca !important; }
+
+.border { border-width: 1px; border-style: solid; }
+.rounded-lg { border-radius: 0.5rem; }
+.rounded-xl { border-radius: 0.75rem; }
+.p-4 { padding: 1rem; }
+.p-5 { padding: 1.25rem; }
+
 .status-hero-tag.positive {
   background: var(--green-bg);
   border: 1px solid var(--green-border);

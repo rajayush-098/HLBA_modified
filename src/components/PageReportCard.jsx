@@ -98,7 +98,9 @@ export default function PageReportCard({ result, lang, formatCurrency }) {
             <span className="col-label">{isHi ? "जिला व राज्य:" : "District & State:"}</span>
             <span className="col-val">{result.district}, {result.state}</span>
             <span className="col-label">{isHi ? "व्यवहार्यता स्थिति:" : "Feasibility Status:"}</span>
-            <span className="col-val text-green"><strong>{result.feasibility}</strong></span>
+            <span className={`col-val ${result.colorTheme ? `text-${result.colorTheme}-900` : "text-green"}`}>
+              <strong>{result.feasibilityVerdict || result.feasibility}</strong>
+            </span>
           </div>
         </div>
 

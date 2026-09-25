@@ -202,6 +202,19 @@ ${contextStr}`;
         }
       }
 
+      // Language handling
+      const languageMap: Record<string, string> = {
+        hi: "Hindi",
+        en: "English",
+        hinglish: "Hinglish (conversational Hindi written in English/Latin script)",
+        mr: "Marathi",
+        bn: "Bengali",
+        te: "Telugu",
+        ta: "Tamil",
+      };
+      const rawLang = req.body?.selectedLanguage || req.body?.language || "Hindi";
+      const selectedLanguage = languageMap[rawLang] || rawLang;
+
       // --> Updated Gemini prompt: exactly 2 flowing paragraphs (6 to 8 sentences total)
       const prompt = `You are a friendly, experienced local business advisor helping a rural micro-entrepreneur in India.
 The user wants to start a ${business_category} business in ${block} Block, ${district} (PIN Code: ${pin || "local area"}).
@@ -218,7 +231,8 @@ STRICT CONSTRAINTS:
 - Total length must be approximately 6 to 8 sentences across both paragraphs.
 - DO NOT use any markdown formatting, asterisks (*), hashtags (#), headers, bullet points, numbers, or section labels.
 - DO NOT use academic jargon, corporate terms, SWOT categories, or risk matrices.
-- Write in warm, plain, conversational, and supportive language like a trusted local advisor speaking directly to the business owner.`;
+- Write in warm, plain, conversational, and supportive language like a trusted local advisor speaking directly to the business owner.
+- Ensure the final output is generated entirely in the following language: ${selectedLanguage}`;
 
       let market_summary = "";
       try {

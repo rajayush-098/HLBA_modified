@@ -33,14 +33,18 @@ export default function SidebarNav({
             </div>
           </div>
 
-          <div className="sidebar-feasibility-tag">
-            {result?.feasibility === "Highly Feasible"
-              ? (lang === "hi" ? "अति उत्तम व सुरक्षित" : "Highly Feasible")
-              : result?.feasibility === "Feasible"
-              ? (lang === "hi" ? "शुरू करने योग्य" : "Feasible & Good")
-              : result?.feasibility === "Moderately Feasible"
-              ? (lang === "hi" ? "सावधानी रखें" : "Moderate Risk")
-              : (lang === "hi" ? "जोखिम भरा" : "Risky")}
+          <div
+            className="sidebar-feasibility-tag"
+            style={{
+              padding: "4px 8px",
+              borderRadius: "6px",
+              fontSize: "12px",
+              fontWeight: "600",
+              textAlign: "center",
+              marginBottom: "8px",
+            }}
+          >
+            {result?.feasibilityVerdict || result?.feasibility || "Feasible"}
           </div>
 
           <button

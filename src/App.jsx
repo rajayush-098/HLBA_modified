@@ -1,10 +1,11 @@
-import InteractiveMap from './components/InteractiveMap';
 import { useState, useEffect } from "react";
 import "./App.css";
 import locationData from "./locationData";
 import { analyzeBusiness } from "./advisorLogic";
 import { translations } from "./translations";
 import { speakText, stopSpeaking } from "./utils/speech";
+import i18n from "./i18n";
+import LanguageSwitcher from "./components/LanguageSwitcher";
 
 // Side Pages
 import SidebarNav from "./components/SidebarNav";
@@ -30,11 +31,19 @@ const PAGES = [
       en: "Overview & Verdict",
       hi: "सारांश व फैसला",
       hinglish: "Summary aur Faisla",
+      mr: "आढावा आणि निष्कर्ष",
+      bn: "সারসংক্ষেপ ও সিদ্ধান্ত",
+      te: "సమీక్ష మరియు తీర్పు",
+      ta: "கண்ணோட்டம் மற்றும் முடிவு",
     },
     subtitle: {
       en: "Feasibility, key profit & verdict",
       hi: "मुनाफा व मुख्य परिणाम",
       hinglish: "Overall profit aur natija",
+      mr: "व्यवहार्यता व नफा",
+      bn: "সম্ভাব্যতা ও নিট লাভ",
+      te: "సాధ్యత మరియు లాభం",
+      ta: "சாத்தியக்கூறு & லாபம்",
     },
   },
   {
@@ -43,11 +52,19 @@ const PAGES = [
       en: "Profit & Money Math",
       hi: "कमाई और खर्चा",
       hinglish: "Kamai aur Kharcha",
+      mr: "नफा आणि हिशोब",
+      bn: "আয় এবং ব্যয়",
+      te: "ఆదాయం మరియు ఖర్చులు",
+      ta: "வருமானம் & செலவு",
     },
     subtitle: {
       en: "Sales, costs & break-even point",
       hi: "बिक्री, लागत व ब्रेक-ईवन",
       hinglish: "Bikri, kharcha aur bachat",
+      mr: "विक्री, खर्च व नफा बिंदू",
+      bn: "বিক্রয় ও সমপরিমাণ আয়",
+      te: "అమ్మకాలు మరియు బ్రేక్ ఈవెన్",
+      ta: "விற்பனை & சமநிலை புள்ளி",
     },
   },
   {
@@ -56,11 +73,19 @@ const PAGES = [
       en: "12-Month Projection",
       hi: "12 महीने का हिसाब",
       hinglish: "12 Mahine Ka Hisab",
+      mr: "12 महिन्यांचा अंदाज",
+      bn: "১২ মাসের হিসাব",
+      te: "12 నెలల అంచనా",
+      ta: "12 மாத கணிப்பு",
     },
     subtitle: {
       en: "Month-by-month savings timeline",
       hi: "1 साल में कुल जमा पूँजी",
       hinglish: "Ek saal ki kul bachat",
+      mr: "वार्षिक जमा भांडवल",
+      bn: "১ বছরের মোট সঞ্চয়",
+      te: "వార్షిక పొదుపు వివరాలు",
+      ta: "வருடாந்திர சேமிப்பு விவரம்",
     },
   },
   {
@@ -69,11 +94,19 @@ const PAGES = [
       en: "Govt Loan & Schemes",
       hi: "सरकारी लोन योजना",
       hinglish: "Sarkari Loan Scheme",
+      mr: "सरकारी कर्ज योजना",
+      bn: "সরকারি ঋণ প্রকল্প",
+      te: "ప్రభుత్వ రుణ పథకాలు",
+      ta: "அரசு கடன் திட்டங்கள்",
     },
     subtitle: {
       en: "Matched scheme & 4-step guide",
       hi: "योजना व आवेदन का तरीका",
       hinglish: "Bank loan aur apply steps",
+      mr: "कर्ज योजना व अर्ज पद्धती",
+      bn: "প্রকল্প ও আবেদনের নিয়ম",
+      te: "పథకం మరియు దరఖాస్తు విధానం",
+      ta: "திட்டம் & விண்ணப்பிக்கும் வழி",
     },
   },
   {
@@ -82,11 +115,19 @@ const PAGES = [
       en: "Monthly EMI & Schedule",
       hi: "महीने की किश्त (EMI)",
       hinglish: "Har Mahine Ki Kist",
+      mr: "मासिक हप्ता (EMI)",
+      bn: "মাসিক কিস্তি (EMI)",
+      te: "నెలవారీ వాయిదా (EMI)",
+      ta: "மாதாந்திர தவணை (EMI)",
     },
     subtitle: {
       en: "EMI affordability & tenure",
       hi: "किश्त चुकाने की क्षमता",
       hinglish: "EMI repayment schedule",
+      mr: "हप्ता फेडण्याची क्षमता",
+      bn: "কিস্তি পরিশোধের ক্ষমতা",
+      te: "వాయిదా చెల్లింపు సామర్థ్యం",
+      ta: "தவணை செலுத்தும் திறன்",
     },
   },
   {
@@ -95,11 +136,19 @@ const PAGES = [
       en: "Local Area & Market Demand",
       hi: "गाँव का बाज़ार व माँग",
       hinglish: "Gaon Ka Bazaar aur Demand",
+      mr: "स्थानिक बाजार व मागणी",
+      bn: "স্থানীয় বাজার ও চাহিদা",
+      te: "స్థానిక మార్కెట్ & డిమాండ్",
+      ta: "உள்ளூர் சந்தை & தேவை",
     },
     subtitle: {
       en: "5-10 km radius & channels",
       hi: "ग्राहक दायरा व बिक्री के साधन",
       hinglish: "Grahak aur competition",
+      mr: "ग्राहक पोहोच व विक्री मार्ग",
+      bn: "ক্রেতা পরিসর ও মাধ্যম",
+      te: "వినియోగదారుల పరిధి",
+      ta: "வாடிக்கையாளர் எல்லை",
     },
   },
   {
@@ -108,11 +157,19 @@ const PAGES = [
       en: "New Opportunities",
       hi: "नए व्यापारिक मौके",
       hinglish: "Naye Business Mauke",
+      mr: "नवीन व्यावसायिक संधी",
+      bn: "নতুন ব্যবসায়িক সুযোগ",
+      te: "కొత్త వ్యాపార అవకాశాలు",
+      ta: "புதிய வணிக வாய்ப்புகள்",
     },
     subtitle: {
       en: "Unserved niches & growth",
       hi: "खाली जगहें जहाँ कम्पटीशन कम है",
       hinglish: "Extra kamai ke raaste",
+      mr: "कमी स्पर्धा असणाऱ्या संधी",
+      bn: "কম প্রতিযোগিতার ক্ষেত্র",
+      te: "తక్కువ పోటీ ఉన్న రంగాలు",
+      ta: "குறைந்த போட்டி உள்ள பகுதிகள்",
     },
   },
   {
@@ -121,11 +178,19 @@ const PAGES = [
       en: "Strengths & Weaknesses (SWOT)",
       hi: "ताकत और कमज़ोरी (SWOT)",
       hinglish: "Taqat aur Kamzori",
+      mr: "सामर्थ्य आणि मर्यादा (SWOT)",
+      bn: "শক্তি ও দুর্বলতা (SWOT)",
+      te: "బలాలు మరియు బలహీనతలు (SWOT)",
+      ta: "பலம் மற்றும் பலவீனம் (SWOT)",
     },
     subtitle: {
       en: "Internal power & watchouts",
       hi: "आपकी मजबूती व सावधानियाँ",
       hinglish: "Faayde aur bachav",
+      mr: "तुमची ताकद व दक्षता",
+      bn: "শক্তি ও সতর্কতা",
+      te: "మీ బలం మరియు జాగ్రత్తలు",
+      ta: "உங்கள் பலம் & முன்னெச்சரிக்கைகள்",
     },
   },
   {
@@ -134,11 +199,19 @@ const PAGES = [
       en: "Risk & Safety Guide",
       hi: "खतरा व सुरक्षा गाइड",
       hinglish: "Khatra aur Safety",
+      mr: "जोखीम व सुरक्षितता",
+      bn: "ঝুঁকি ও সুরক্ষা নির্দেশিকা",
+      te: "రిస్క్ మరియు భద్రత",
+      ta: "ஆபத்து & பாதுகாப்பு வழிகாட்டி",
     },
     subtitle: {
       en: "Safety score & loss prevention",
       hi: "सुरक्षा स्कोर व नुकसान से बचाव",
       hinglish: "Risk meter aur backup fund",
+      mr: "सुरक्षितता गुण व नुकसान बचाव",
+      bn: "নিরাপত্তা স্কোর ও ক্ষতি রোধ",
+      te: "భద్రతా స్కోరు & నష్ట నివారణ",
+      ta: "பாதுகாப்பு & நஷ்ட தடுப்பு",
     },
   },
   {
@@ -147,11 +220,19 @@ const PAGES = [
       en: "AI Business Advisor",
       hi: "AI व्यापार साथी",
       hinglish: "AI Vyapar Advisor",
+      mr: "AI व्यवसाय सल्लागार",
+      bn: "AI ব্যবসা উপদেষ্টা",
+      te: "AI వ్యాపార సలహాదారు",
+      ta: "AI வணிக ஆலோசகர்",
     },
     subtitle: {
       en: "Ask any question in simple words",
       hi: "बोलकर या लिखकर सवाल पूछें",
       hinglish: "Koi bhi sawal puchhein",
+      mr: "सोप्या शब्दांत प्रश्न विचारा",
+      bn: "সহজ কথায় প্রশ্ন করুন",
+      te: "సులభమైన మాటల్లో ప్రశ్నలు అడగండి",
+      ta: "எளிய சொற்களில் கேள்வி கேளுங்கள்",
     },
   },
   {
@@ -160,13 +241,39 @@ const PAGES = [
       en: "Print Business Parcha",
       hi: "व्यापार पर्चा प्रिंट करें",
       hinglish: "Vyapar Parcha Print",
+      mr: "व्यवसाय अहवाल प्रिंट करा",
+      bn: "ব্যবসা রিপোর্ট প্রিন্ট করুন",
+      te: "వ్యాపార నివేదిక ముద్రించండి",
+      ta: "வணிக அறிக்கையை அச்சிடுக",
     },
     subtitle: {
       en: "Official 1-page report for bank",
       hi: "बैंक व पंचायत में दिखाने योग्य",
       hinglish: "Bank manager ko dikhane ke liye",
+      mr: "बँकेत सादर करण्याजोगा अहवाल",
+      bn: "ব্যাংকের জন্য ১ পৃষ্ঠার রিপোর্ট",
+      te: "బ్యాంకు కోసం అధికారిక నివేదిక",
+      ta: "வங்கி பயன்பாட்டிற்கான அறிக்கை",
     },
   },
+];
+
+const businessTypes = [
+  "Dairy & Milk Products",
+  "Poultry & Bird Farming",
+  "Agriculture, Seeds & Farming",
+  "Fishery & Fish Farming",
+  "Retail, Kirana & General Store",
+  "Service, Repair & Mobile Shop",
+  "Small Manufacturing & Flour Mill",
+  "Pickles, Papad, Bakery & Food Processing",
+  "Carpenter, Blacksmith, Potter & Artisan",
+  "Tailoring, Garments & Handloom Weaving",
+  "Street Vendor, Hawker & Food Cart",
+  "Cold Storage, Warehouse & Post-Harvest Setup",
+  "Agri-Clinic, Nursery & Farm Advisory Centre",
+  "Solar Rooftop Installation & Green Energy Services",
+  "Sanitation, Waste Recycling & Cleaning Services"
 ];
 
 function App() {
@@ -181,7 +288,7 @@ function App() {
   const [formData, setFormData] = useState({
     udyam_number: "",
     business_name: "किसान डेयरी फार्म (Kisan Dairy Farm)",
-    category: "Dairy",
+    category: "Dairy & Milk Products",
     state: "Uttar Pradesh",
     district: "Meerut",
     block: "Sardhana",
@@ -360,7 +467,7 @@ function App() {
     if (presetKey === "dairy") {
       setFormData({
         business_name: "किसान दूध डेयरी फार्म (Dairy Farm)",
-        category: "Dairy",
+        category: "Dairy & Milk Products",
         state: "Uttar Pradesh",
         district: "Meerut",
         block: "Sardhana",
@@ -373,7 +480,7 @@ function App() {
     } else if (presetKey === "retail") {
       setFormData({
         business_name: "शर्मा किराना व जनरल स्टोर (Kirana Store)",
-        category: "Retail",
+        category: "Retail, Kirana & General Store",
         state: "Bihar",
         district: "Patna",
         block: "Danapur",
@@ -386,7 +493,7 @@ function App() {
     } else if (presetKey === "agri") {
       setFormData({
         business_name: "ग्राम बीज व खाद भंडार (Seed & Agri Store)",
-        category: "Agriculture",
+        category: "Agriculture, Seeds & Farming",
         state: "Madhya Pradesh",
         district: "Indore",
         block: "Sanwer",
@@ -399,7 +506,7 @@ function App() {
     } else if (presetKey === "poultry") {
       setFormData({
         business_name: "जय जवान मुर्गी पालन (Poultry Farm)",
-        category: "Poultry",
+        category: "Poultry & Bird Farming",
         state: "Rajasthan",
         district: "Jaipur",
         block: "Amber",
@@ -412,7 +519,7 @@ function App() {
     } else if (presetKey === "tailor") {
       setFormData({
         business_name: "लक्ष्मी सिलाई व बुटीक केंद्र (Tailoring)",
-        category: "Service",
+        category: "Tailoring, Garments & Handloom Weaving",
         state: "Uttar Pradesh",
         district: "Gorakhpur",
         block: "Pipraich",
@@ -423,6 +530,15 @@ function App() {
         monthly_expenses: "12000",
       });
     }
+  };
+
+  const handleLanguageChange = (newLang) => {
+    setLang(newLang);
+    if (i18n.language !== newLang) {
+      i18n.changeLanguage(newLang);
+    }
+    stopSpeaking();
+    setIsSpeaking(false);
   };
 
   const validateForm = () => {
@@ -518,6 +634,17 @@ function App() {
       
       // Send the complete data package to the Node.js backend
       try {
+        const languageNames = {
+          hi: "Hindi",
+          en: "English",
+          hinglish: "Hinglish",
+          mr: "Marathi",
+          bn: "Bengali",
+          te: "Telugu",
+          ta: "Tamil",
+        };
+        const activeLanguage = languageNames[lang] || lang || "Hindi";
+
         const apiRes = await fetch("/api/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -534,6 +661,8 @@ function App() {
             investment: Number(formData.investment),
             monthly_revenue: Number(formData.monthly_revenue),
             monthly_expenses: Number(formData.monthly_expenses),
+            language: lang,
+            selectedLanguage: activeLanguage,
           }),
         });
         if (apiRes.ok) {
@@ -625,45 +754,8 @@ function App() {
         </div>
 
         <div className="topbar-right">
-          {/* Language selector for low-English users */}
-          <div className="lang-switcher">
-            <button
-              type="button"
-              className={`lang-btn ${lang === "hi" ? "active" : ""}`}
-              onClick={() => {
-                setLang("hi");
-                stopSpeaking();
-                setIsSpeaking(false);
-              }}
-              title="हिंदी में देखें"
-            >
-              हिंदी
-            </button>
-            <button
-              type="button"
-              className={`lang-btn ${lang === "en" ? "active" : ""}`}
-              onClick={() => {
-                setLang("en");
-                stopSpeaking();
-                setIsSpeaking(false);
-              }}
-              title="Simple English"
-            >
-              English
-            </button>
-            <button
-              type="button"
-              className={`lang-btn ${lang === "hinglish" ? "active" : ""}`}
-              onClick={() => {
-                setLang("hinglish");
-                stopSpeaking();
-                setIsSpeaking(false);
-              }}
-              title="बोलचाल Hinglish"
-            >
-              Hinglish
-            </button>
-          </div>
+          {/* Multilingual language dropdown switcher */}
+          <LanguageSwitcher activeLang={lang} onLanguageChange={handleLanguageChange} />
 
           {result && (
             <button
@@ -681,27 +773,7 @@ function App() {
       {/* ================= MAIN CONTAINER ================= */}
       <main className="container">
         {!result ? (
-      <section className="form-section">
-            <InteractiveMap 
-              onLocationFound={(mapState, mapDistrict, mapPin, mapBlock) => {
-                setDetectedLocation({ district: mapDistrict, pin: mapPin });
-
-                // Clean up any extra words the map API adds
-                const cleanDistrict = mapDistrict ? mapDistrict.replace(/\s+district$/i, "").trim() : "";
-                const cleanBlock = mapBlock ? mapBlock.replace(/\s+(tehsil|taluka|block)$/i, "").trim() : "";
-
-                // Instantly override the form fields with the live location
-                setFormData((prev) => ({
-                  ...prev,
-                  state: mapState || prev.state,
-                  district: cleanDistrict || prev.district,
-                  block: cleanBlock || prev.block,
-                }));
-                
-                console.log("Form auto-filled with:", mapState, cleanDistrict, cleanBlock, mapPin);
-              }} 
-            />
-            
+          <section className="form-section">
             <div className="section-heading">
               <div className="heading-content">
                 <h2>{t.formHeading}</h2>
@@ -753,79 +825,6 @@ function App() {
 
             <form onSubmit={handleSubmit} noValidate>
               <div className="form-grid">
-                {/* UDYAM REGISTRATION NUMBER (OPTIONAL) */}
-                <div className="input-group" style={{ gridColumn: "1 / -1" }}>
-                  <label htmlFor="udyam_number">
-                    {lang === "hi"
-                      ? "उद्यम रजिस्ट्रेशन नंबर (वैकल्पिक / Optional)"
-                      : "Udyam Registration Number (Optional)"}
-                  </label>
-                  <div style={{ display: "flex", gap: "10px", alignItems: "stretch", flexWrap: "wrap" }}>
-                    <input
-                      id="udyam_number"
-                      type="text"
-                      name="udyam_number"
-                      placeholder="e.g. UDYAM-UP-48-0012345"
-                      value={formData.udyam_number}
-                      onChange={handleChange}
-                      style={{ flex: "1 1 240px", minWidth: "220px" }}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleVerifyUdyam}
-                      disabled={udyamLoading}
-                      style={{
-                        padding: "0 22px",
-                        height: "48px",
-                        backgroundColor: "#15573f",
-                        color: "#ffffff",
-                        border: "none",
-                        borderRadius: "8px",
-                        fontWeight: 600,
-                        fontSize: "14px",
-                        cursor: udyamLoading ? "not-allowed" : "pointer",
-                        opacity: udyamLoading ? 0.7 : 1,
-                        whiteSpace: "nowrap",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        transition: "background-color 0.2s",
-                      }}
-                    >
-                      {udyamLoading
-                        ? lang === "hi"
-                          ? "सत्यापित हो रहा है..."
-                          : "Verifying..."
-                        : "Verify Udyam"}
-                    </button>
-                  </div>
-                  <small className="input-help-text">
-                    {lang === "hi"
-                      ? "अपना उद्यम रजिस्ट्रेशन नंबर दर्ज करें और 'Verify Udyam' दबाकर विवरण स्वतः भरें।"
-                      : "Enter your Udyam Registration Number and click 'Verify Udyam' to auto-fill business details."}
-                  </small>
-                  {udyamStatus && (
-                    <div
-                      style={{
-                        marginTop: "8px",
-                        padding: "8px 12px",
-                        borderRadius: "6px",
-                        fontSize: "13px",
-                        fontWeight: 600,
-                        backgroundColor:
-                          udyamStatus.type === "success" ? "#dcfce7" : "#fee2e2",
-                        color:
-                          udyamStatus.type === "success" ? "#15803d" : "#b91c1c",
-                        border: `1px solid ${
-                          udyamStatus.type === "success" ? "#86efac" : "#fca5a5"
-                        }`,
-                      }}
-                    >
-                      {udyamStatus.message}
-                    </div>
-                  )}
-                </div>
-
                 {/* BUSINESS NAME */}
                 <div className="input-group">
                   <label htmlFor="business_name">
@@ -858,13 +857,11 @@ function App() {
                     onChange={handleChange}
                   >
                     <option value="">{t.selectCategory}</option>
-                    <option value="Dairy">{t.catDairy}</option>
-                    <option value="Poultry">{t.catPoultry}</option>
-                    <option value="Agriculture">{t.catAgri}</option>
-                    <option value="Fishery">{t.catFishery}</option>
-                    <option value="Retail">{t.catRetail}</option>
-                    <option value="Service">{t.catService}</option>
-                    <option value="Manufacturing">{t.catMfg}</option>
+                    {businessTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -1074,6 +1071,111 @@ function App() {
               >
                 {loading ? t.btnAnalyzing : t.btnAnalyze}
               </button>
+
+              {/* SUBTLE UDYAM AUTO-FILL (DEMOTED TO BOTTOM) */}
+              <div
+                style={{
+                  marginTop: "20px",
+                  paddingTop: "14px",
+                  borderTop: "1px dashed #cbd5e1",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    flexWrap: "wrap",
+                    justifyContent: "center",
+                    fontSize: "13px",
+                    color: "#64748b",
+                  }}
+                >
+                  <span>
+                    {lang === "hi"
+                      ? "उद्यम रजिस्ट्रेशन है? (वैकल्पिक):"
+                      : "Have an Udyam Number? (Optional):"}
+                  </span>
+                  <div style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+                    <input
+                      id="udyam_number"
+                      type="text"
+                      name="udyam_number"
+                      placeholder="UDYAM-XX-00-0000000"
+                      value={formData.udyam_number}
+                      onChange={handleChange}
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: "12px",
+                        height: "30px",
+                        width: "190px",
+                        borderRadius: "6px",
+                        border: "1px solid #cbd5e1",
+                        backgroundColor: "#f8fafc",
+                        color: "#334155",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleVerifyUdyam}
+                      disabled={udyamLoading}
+                      style={{
+                        padding: "3px 10px",
+                        height: "30px",
+                        fontSize: "12px",
+                        fontWeight: 500,
+                        backgroundColor: "#f1f5f9",
+                        color: "#475569",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "6px",
+                        cursor: udyamLoading ? "not-allowed" : "pointer",
+                        opacity: udyamLoading ? 0.6 : 1,
+                        transition: "all 0.15s ease",
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.backgroundColor = "#e2e8f0";
+                        e.currentTarget.style.color = "#0f172a";
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.backgroundColor = "#f1f5f9";
+                        e.currentTarget.style.color = "#475569";
+                      }}
+                    >
+                      {udyamLoading
+                        ? lang === "hi"
+                          ? "जाँच..."
+                          : "Checking..."
+                        : lang === "hi"
+                        ? "ऑटो-भरें"
+                        : "Auto-fill"}
+                    </button>
+                  </div>
+                </div>
+
+                {udyamStatus && (
+                  <div
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: 500,
+                      backgroundColor:
+                        udyamStatus.type === "success" ? "#dcfce7" : "#fee2e2",
+                      color:
+                        udyamStatus.type === "success" ? "#15803d" : "#b91c1c",
+                      border: `1px solid ${
+                        udyamStatus.type === "success" ? "#86efac" : "#fca5a5"
+                      }`,
+                    }}
+                  >
+                    {udyamStatus.message}
+                  </div>
+                )}
+              </div>
             </form>
           </section>
         ) : (
@@ -1199,6 +1301,7 @@ function App() {
                   <PageMarket
                     result={result}
                     lang={lang}
+                    formData={formData}
                   />
                 )}
 

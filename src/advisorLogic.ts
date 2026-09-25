@@ -15,74 +15,224 @@ export interface BusinessRequest {
   monthly_expenses: number;
 }
 
-export function matchGovernmentScheme(category: string, investment: number) {
-  const schemes = governmentSchemesData?.schemes || [];
-  const cleanCat = (category || '').toLowerCase().trim();
-  const numInvestment = Number(investment) || 0;
+export function cleanBusinessTokens(businessString: string): string[] {
+  if (!businessString) return [];
+  const stopWords = new Set([
+    'and', '&', 'or', 'the', 'in', 'of', 'for', 'with', 'a', 'an', 'at', 'by', 'from',
+    'setup', 'services', 'service', 'centre', 'center', 'store', 'shop'
+  ]);
+  return businessString
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 2 && !stopWords.has(w));
+}
 
-  // Filter schemes where category matches one of preferred_categories AND investment <= max_project_cost
-  const eligibleSchemes = schemes.filter((scheme: any) => {
-    const rules = scheme.matching_rules || {};
-    const preferred = (rules.preferred_categories || []).map((c: string) => c.toLowerCase().trim());
+function tokenMatchesText(token: string, targetText: string): boolean {
+  if (!targetText || typeof targetText !== 'string' || !token) return false;
+  const t = targetText.toLowerCase().trim();
+  const tok = token.toLowerCase().trim();
+  if (t === tok) return true;
+  const words = t.split(/[\s,/_.-]+/);
+  if (words.includes(tok)) return true;
+  if (tok.length >= 4 && t.includes(tok)) return true;
+  if (t.length >= 4 && tok.includes(t)) return true;
+  if (tok.length >= 5 && t.length >= 5 && tok.slice(0, 5) === t.slice(0, 5)) return true;
+  return false;
+}
 
-    const categoryMatches = preferred.some((p: string) => {
-      if (cleanCat === p) return true;
-      if (cleanCat.includes(p) || p.includes(cleanCat)) return true;
-      if (cleanCat === 'fishery' && (p === 'fisheries' || p === 'fish' || p === 'aquaculture')) return true;
-      if (cleanCat === 'retail' && (p === 'trading' || p === 'business' || p === 'vendor' || p === 'street vendor')) return true;
-      if (cleanCat === 'service' && p === 'services') return true;
-      return false;
-    });
+function getSchemeMinLimit(scheme: any): number | null {
+  if (scheme.project_limits?.minimum_project_cost != null) {
+    return Number(scheme.project_limits.minimum_project_cost);
+  }
+  if (scheme.matching_rules?.min_project_cost != null) {
+    return Number(scheme.matching_rules.min_project_cost);
+  }
+  if (scheme.loan?.minimum_loan != null) {
+    return Number(scheme.loan.minimum_loan);
+  }
+  return null;
+}
 
-    if (!categoryMatches) return false;
+function getSchemeMaxLimit(scheme: any): number | null {
+  const candidates: number[] = [];
 
-    if (rules.max_project_cost !== undefined && rules.max_project_cost !== null) {
-      if (numInvestment > rules.max_project_cost) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  if (eligibleSchemes.length > 0) {
-    return eligibleSchemes[0];
+  if (scheme.matching_rules?.max_project_cost != null) {
+    candidates.push(Number(scheme.matching_rules.max_project_cost));
+  }
+  if (scheme.project_limits?.maximum_project_cost_manufacturing != null) {
+    candidates.push(Number(scheme.project_limits.maximum_project_cost_manufacturing));
+  }
+  if (scheme.project_limits?.maximum_project_cost_service_business != null) {
+    candidates.push(Number(scheme.project_limits.maximum_project_cost_service_business));
+  }
+  if (scheme.project_limits?.maximum_credit_facility != null) {
+    candidates.push(Number(scheme.project_limits.maximum_credit_facility));
+  }
+  if (scheme.project_limits?.loan_limit_for_interest_subvention != null) {
+    candidates.push(Number(scheme.project_limits.loan_limit_for_interest_subvention));
+  }
+  if (scheme.loan?.maximum_loan != null && Number(scheme.loan.maximum_loan) > 0) {
+    candidates.push(Number(scheme.loan.maximum_loan));
   }
 
-  // Fallback to PMMY (MUDRA) or first scheme
-  return schemes.find((s: any) => s.scheme_id === 'PMMY') || schemes[0];
+  const limitsArray = scheme.loan?.loan_limits || scheme.loan?.loan_categories;
+  if (Array.isArray(limitsArray)) {
+    limitsArray.forEach((item: any) => {
+      if (item.max != null) candidates.push(Number(item.max));
+      if (item.amount != null) candidates.push(Number(item.amount));
+    });
+  }
+
+  if (candidates.length === 0) return null;
+  return Math.max(...candidates);
+}
+
+function isEligibleByLimits(scheme: any, investment: number, projectCost: number, _loanReq: number): boolean {
+  const minLimit = getSchemeMinLimit(scheme);
+  if (minLimit != null && investment < minLimit && projectCost < minLimit) {
+    return false;
+  }
+  const maxLimit = getSchemeMaxLimit(scheme);
+  if (maxLimit != null && investment > maxLimit) {
+    return false;
+  }
+  return true;
+}
+
+function scoreSchemeForBusiness(scheme: any, tokens: string[]) {
+  let specializedScore = 0;
+  let generalScore = 0;
+
+  // Preferred categories, eligible activities, target sectors (score highest)
+  const specializedFields = [
+    ...(scheme.matching_rules?.preferred_categories || []),
+    ...(scheme.matching_rules?.eligible_activities || []),
+    ...(scheme.matching_rules?.target_sectors || []),
+    ...(scheme.eligible_activities || []),
+    ...(scheme.target_sectors || []),
+  ].map((s: any) => String(s).toLowerCase().trim());
+
+  const sectorFields = [
+    ...(scheme.sectors || []),
+    ...(scheme.business_types || []),
+    ...(scheme.category ? [scheme.category] : []),
+  ].map((s: any) => String(s).toLowerCase().trim());
+
+  tokens.forEach((tok) => {
+    let matchedInSpecialized = false;
+    for (const spec of specializedFields) {
+      if (tokenMatchesText(tok, spec)) {
+        specializedScore += 25;
+        matchedInSpecialized = true;
+        break;
+      }
+    }
+    if (!matchedInSpecialized) {
+      for (const sec of sectorFields) {
+        if (tokenMatchesText(tok, sec)) {
+          specializedScore += 10;
+          break;
+        }
+      }
+    }
+  });
+
+  // Secondary match if tagged for general micro/small enterprises (e.g. mse, general, all, msme)
+  const allSchemeText = [
+    ...specializedFields,
+    ...sectorFields,
+    scheme.category?.toLowerCase() || '',
+    scheme.scheme_name?.toLowerCase() || '',
+  ];
+
+  const hasGeneralTag = allSchemeText.some(
+    (txt) =>
+      txt.includes('micro enterprise') ||
+      txt.includes('mse') ||
+      txt.includes('msme') ||
+      txt.includes('small enterprise') ||
+      txt.includes('general') ||
+      txt.includes('all') ||
+      txt.includes('rural enterprise')
+  );
+
+  if (hasGeneralTag) {
+    generalScore += 3;
+  }
+
+  const totalScore = specializedScore + generalScore;
+  return { specializedScore, generalScore, totalScore };
+}
+
+export function matchGovernmentScheme(category: string, investment: number) {
+  const schemes = governmentSchemesData?.schemes || [];
+  const tokens = cleanBusinessTokens(category);
+  const numInvestment = Number(investment) || 0;
+  const projectCost = numInvestment / 0.1;
+  const loanReq = projectCost * 0.9;
+
+  const eligibleSchemes = schemes.filter((scheme: any) =>
+    isEligibleByLimits(scheme, numInvestment, projectCost, loanReq)
+  );
+
+  const scored = eligibleSchemes.map((scheme: any) => {
+    const { specializedScore, generalScore, totalScore } = scoreSchemeForBusiness(scheme, tokens);
+    return { scheme, specializedScore, generalScore, totalScore };
+  });
+
+  // Prioritize highest specialized scoring eligible scheme
+  const specializedMatches = scored
+    .filter((s) => s.specializedScore > 0)
+    .sort((a, b) => b.totalScore - a.totalScore);
+
+  if (specializedMatches.length > 0) {
+    return specializedMatches[0].scheme;
+  }
+
+  // Next, pick highest general scoring eligible scheme
+  const generalMatches = scored
+    .filter((s) => s.totalScore > 0)
+    .sort((a, b) => b.totalScore - a.totalScore);
+
+  if (generalMatches.length > 0) {
+    return generalMatches[0].scheme;
+  }
+
+  // Fallback to appropriate general scheme (like PMMY / MUDRA or PMEGP) that fits investment
+  const generalFallback =
+    eligibleSchemes.find(
+      (s: any) =>
+        s.scheme_id === 'PMMY' ||
+        s.short_name?.includes('MUDRA') ||
+        s.scheme_id === 'PMEGP'
+    ) || schemes.find((s: any) => s.scheme_id === 'PMMY') || schemes[0];
+
+  return generalFallback;
 }
 
 export function getAllMatchingSchemes(category: string, investment: number) {
   const schemes = governmentSchemesData?.schemes || [];
-  const cleanCat = (category || '').toLowerCase().trim();
+  const tokens = cleanBusinessTokens(category);
   const numInvestment = Number(investment) || 0;
+  const projectCost = numInvestment / 0.1;
+  const loanReq = projectCost * 0.9;
 
-  const matches = schemes.filter((scheme: any) => {
-    const rules = scheme.matching_rules || {};
-    const preferred = (rules.preferred_categories || []).map((c: string) => c.toLowerCase().trim());
+  const eligibleSchemes = schemes.filter((scheme: any) =>
+    isEligibleByLimits(scheme, numInvestment, projectCost, loanReq)
+  );
 
-    const categoryMatches = preferred.some((p: string) => {
-      if (cleanCat === p) return true;
-      if (cleanCat.includes(p) || p.includes(cleanCat)) return true;
-      if (cleanCat === 'fishery' && (p === 'fisheries' || p === 'fish' || p === 'aquaculture')) return true;
-      if (cleanCat === 'retail' && (p === 'trading' || p === 'business')) return true;
-      if (cleanCat === 'service' && p === 'services') return true;
-      return false;
-    });
+  const scored = eligibleSchemes
+    .map((scheme: any) => {
+      const { specializedScore, generalScore, totalScore } = scoreSchemeForBusiness(scheme, tokens);
+      return { scheme, specializedScore, generalScore, totalScore };
+    })
+    .filter((s) => s.totalScore > 0)
+    .sort((a, b) => b.totalScore - a.totalScore);
 
-    if (!categoryMatches) return false;
-
-    if (rules.max_project_cost !== undefined && rules.max_project_cost !== null) {
-      if (numInvestment > rules.max_project_cost) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  return matches.length > 0 ? matches : [matchGovernmentScheme(category, investment)];
+  const matched = scored.map((s) => s.scheme);
+  return matched.length > 0 ? matched : [matchGovernmentScheme(category, investment)];
 }
 
 export interface AdvisorRequest {
@@ -208,14 +358,14 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
     answer = `To improve ${businessName}, focus on these priorities: 1) increase profitable sales, 2) control unnecessary expenses, 3) maintain accurate income and expense records, 4) study customer needs and competitors, 5) build an emergency cash reserve, and 6) expand gradually only after achieving stable profits.`;
   } else if (['feasible', 'feasibility', 'should i start', 'good business', 'worth starting'].some((w) => question.includes(w))) {
     answer = `The current feasibility assessment for ${businessName} is '${feasibility}'. `;
-    if (feasibility === 'Highly Feasible') {
-      answer += 'The entered financial figures show strong potential. Continue validating actual local demand before making the full investment.';
-    } else if (feasibility === 'Feasible') {
-      answer += 'The business appears viable, but you should carefully manage expenses and monitor local market performance.';
-    } else if (feasibility === 'Moderately Feasible') {
-      answer += 'The business has potential but should improve profitability and financial margins before major expansion.';
+    if (feasibility.includes('Exceptional') || feasibility === 'Highly Feasible') {
+      answer += 'The entered financial figures show strong potential. The business generates more than double the required loan payment, making it highly secure.';
+    } else if (feasibility.includes('Safe') || feasibility === 'Feasible') {
+      answer += 'The business appears viable with a healthy profit buffer to cover unexpected expenses while taking personal income.';
+    } else if (feasibility.includes('Moderately') || feasibility === 'Moderately Feasible') {
+      answer += 'The business is profitable but lean. You can make loan payments, but must strictly control daily expenses.';
     } else {
-      answer += 'The current financial figures do not support strong feasibility. Review revenue assumptions, expenses, and investment requirements.';
+      answer += 'The current financial figures show tight margins or loss. Review revenue assumptions, expenses, and loan requirements.';
     }
   } else {
     answer = `Based on the analysis of ${businessName}, the current feasibility is '${feasibility}', with an estimated monthly profit of ₹${formatCurrency(monthlyProfit)} and ROI of ${roiPercentage.toFixed(2)}%. You can ask me specifically about profit, ROI, expenses, loan EMI, risks, market demand, competition, feasibility, or business growth.`;
@@ -271,18 +421,6 @@ export function analyzeBusiness(data: BusinessRequest) {
       monthly_profit: Math.round(monthlyProfit * 100) / 100,
       cumulative_profit: Math.round(cumulativeProfit * 100) / 100,
     });
-  }
-
-  // FEASIBILITY
-  let feasibility = 'Moderately Feasible';
-  if (monthlyProfit <= 0) {
-    feasibility = 'Not Feasible';
-  } else if (roi >= 30 && profitMargin >= 20) {
-    feasibility = 'Highly Feasible';
-  } else if (roi >= 15) {
-    feasibility = 'Feasible';
-  } else {
-    feasibility = 'Moderately Feasible';
   }
 
   // STEP 5: GOVERNMENT LOAN SCHEME ANALYSIS (Dynamic matching using government_schemes.json)
@@ -438,6 +576,45 @@ export function analyzeBusiness(data: BusinessRequest) {
     }
   }
 
+  // STEP 6.5: 5-TIER FINANCIAL CALCULATION & DEBT SERVICE COVERAGE RATIO (DSCR)
+  const netMonthlyProfit = monthlyProfit;
+  const effectiveMonthlyEmi = monthlyEmi && monthlyEmi > 0 ? monthlyEmi : 0;
+  // If monthlyEmi is 0, default to the highest tier (DSCR >= 2.0)
+  const dscr = effectiveMonthlyEmi === 0 ? 999 : netMonthlyProfit / effectiveMonthlyEmi;
+
+  let feasibilityVerdict = '';
+  let colorTheme = 'green';
+  let feasibilityDescription = '';
+
+  if (dscr >= 2.0) {
+    feasibilityVerdict = 'Exceptional & Highly Feasible';
+    colorTheme = 'green';
+    feasibilityDescription =
+      'Strong profit margins. The business generates more than double the required loan payment, making it highly secure.';
+  } else if (dscr >= 1.5) {
+    feasibilityVerdict = 'Feasible & Safe';
+    colorTheme = 'blue';
+    feasibilityDescription =
+      'Healthy profit buffer. You can comfortably cover the EMI and unexpected expenses while taking a personal income.';
+  } else if (dscr >= 1.15) {
+    feasibilityVerdict = 'Moderately Feasible / Needs Caution';
+    colorTheme = 'yellow';
+    feasibilityDescription =
+      'Profitable but lean. You can make loan payments, but must strictly control daily expenses to avoid cash flow issues.';
+  } else if (dscr >= 1.0) {
+    feasibilityVerdict = 'High Risk / Tight Margins';
+    colorTheme = 'orange';
+    feasibilityDescription =
+      'Barely breaking even. Almost all profit goes to the bank. High risk of loan default if sales drop even slightly.';
+  } else {
+    feasibilityVerdict = 'Unfeasible / Not Recommended';
+    colorTheme = 'red';
+    feasibilityDescription =
+      'Mathematical loss. The projected profit cannot cover the monthly loan payment. Reassess your costs or loan amount.';
+  }
+
+  const feasibility = feasibilityVerdict;
+
   // STEP 7: SMART SCHEME MATCHING (Dynamic from government_schemes.json)
   const matchingSchemes = matchedAllSchemes.map((s: any) => ({
     scheme_id: s.scheme_id,
@@ -467,17 +644,18 @@ export function analyzeBusiness(data: BusinessRequest) {
 
   // HYPER-LOCAL MARKET ANALYSIS
   const category = (data.category || '').toLowerCase();
-  const localDemand: string = ['dairy', 'agriculture', 'poultry', 'fishery'].includes(category)
-  ? 'High'
-  : 'Medium';
+  const localDemand: string =
+    ['dairy', 'agriculture', 'poultry', 'fishery', 'food', 'solar', 'agri', 'seed', 'farm', 'milk', 'bread', 'bakery'].some((k) => category.includes(k))
+      ? 'High'
+      : 'Medium';
 
   let competitionLevel = 'Medium';
-  if (['retail', 'service'].includes(category)) {
+  if (['retail', 'service', 'shop', 'vendor', 'hawker'].some((k) => category.includes(k))) {
     competitionLevel = 'High';
-  } else if (['dairy', 'poultry', 'agriculture'].includes(category)) {
+  } else if (['dairy', 'poultry', 'agriculture', 'farming', 'food', 'processing'].some((k) => category.includes(k))) {
     competitionLevel = 'Medium';
   } else {
-    competitionLevel = 'Medium';
+    competitionLevel = 'Low';
   }
 
   let marketPotentialScore = 50;
@@ -531,7 +709,7 @@ export function analyzeBusiness(data: BusinessRequest) {
         : 'The business can serve the local 5–10 km market, but demand should be validated before expansion.',
   };
 
-  if (category === 'dairy') {
+  if (category.includes('dairy') || category.includes('milk')) {
     marketReach.distribution_channels = [
       'Nearby households',
       'Local milk collection centers',
@@ -539,7 +717,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Restaurants and tea shops',
       'Direct home delivery',
     ];
-  } else if (category === 'poultry') {
+  } else if (category.includes('poultry') || category.includes('bird')) {
     marketReach.distribution_channels = [
       'Nearby households',
       'Local grocery shops',
@@ -547,7 +725,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Local poultry retailers',
       'Direct local delivery',
     ];
-  } else if (category === 'agriculture') {
+  } else if (category.includes('agri') || category.includes('farm') || category.includes('seed')) {
     marketReach.distribution_channels = [
       'Local markets',
       'Nearby households',
@@ -555,7 +733,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Retailers and wholesalers',
       'Direct-to-consumer sales',
     ];
-  } else if (category === 'fishery') {
+  } else if (category.includes('fish')) {
     marketReach.distribution_channels = [
       'Local fish markets',
       'Nearby households',
@@ -563,7 +741,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Local retailers',
       'Direct local delivery',
     ];
-  } else if (category === 'retail') {
+  } else if (category.includes('retail') || category.includes('kirana') || category.includes('store') || category.includes('vendor')) {
     marketReach.distribution_channels = [
       'Nearby households',
       'Walk-in local customers',
@@ -571,13 +749,29 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Local delivery',
       'Repeat neighborhood customers',
     ];
-  } else if (category === 'service') {
+  } else if (category.includes('service') || category.includes('repair') || category.includes('solar') || category.includes('sanitation')) {
     marketReach.distribution_channels = [
       'Nearby households',
       'Local customers',
       'Local institutions',
       'Referral customers',
       'Digital/local communication channels',
+    ];
+  } else if (category.includes('food') || category.includes('bakery') || category.includes('pickle') || category.includes('flour')) {
+    marketReach.distribution_channels = [
+      'Local grocery stores & kirana shops',
+      'Weekly village haats & bazaars',
+      'Nearby households & direct delivery',
+      'Tea stalls & small eateries',
+      'Tehsil mandi wholesale points',
+    ];
+  } else if (category.includes('artisan') || category.includes('tailor') || category.includes('garment') || category.includes('weaving') || category.includes('carpenter') || category.includes('blacksmith') || category.includes('potter')) {
+    marketReach.distribution_channels = [
+      'Direct walk-in local clientele',
+      'Custom bespoke orders for weddings & festivals',
+      'Nearby village fairs & haat stalls',
+      'Local retail shop tie-ups',
+      'Word-of-mouth community referrals',
     ];
   } else {
     marketReach.distribution_channels = [
@@ -593,7 +787,7 @@ export function analyzeBusiness(data: BusinessRequest) {
   let localOpportunities: string[] = [];
   let localRisks: string[] = [];
 
-  if (category === 'dairy') {
+  if (category.includes('dairy') || category.includes('milk')) {
     localOpportunities = [
       'Growing demand for milk and dairy products.',
       'Opportunity to supply nearby households and milk collection centers.',
@@ -604,7 +798,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Milk price fluctuations.',
       'Dependence on reliable veterinary services.',
     ];
-  } else if (category === 'poultry') {
+  } else if (category.includes('poultry') || category.includes('bird')) {
     localOpportunities = [
       'Regular demand for eggs and poultry products.',
       'Opportunity to supply local shops and restaurants.',
@@ -615,38 +809,71 @@ export function analyzeBusiness(data: BusinessRequest) {
       'Fluctuating feed costs.',
       'Changes in local poultry market prices.',
     ];
-  } else if (category === 'agriculture') {
+  } else if (category.includes('agri') || category.includes('farm') || category.includes('seed')) {
     localOpportunities = [
-      'Opportunity to select crops suitable for local conditions.',
-      'Potential for direct-to-market selling.',
-      'Scope for value-added agricultural products.',
+      'Opportunity to select crops and seeds suitable for local soil conditions.',
+      'Potential for direct farm-to-market selling.',
+      'Scope for value-added agricultural inputs and advisory.',
     ];
     localRisks = [
-      'Weather and seasonal risks.',
-      'Fluctuating crop prices.',
+      'Weather and seasonal rainfall risks.',
+      'Fluctuating mandi crop prices.',
       'Water availability and irrigation dependency.',
     ];
-  } else if (category === 'fishery') {
+  } else if (category.includes('fish')) {
     localOpportunities = [
-      'Growing demand for fresh fish products.',
+      'Growing demand for fresh fish in weekly local bazaars.',
       'Opportunity to supply nearby markets and restaurants.',
-      'Potential to select high-demand fish species.',
+      'Potential to select high-demand local fish species.',
     ];
     localRisks = [
-      'Water quality and availability risks.',
-      'Fish disease risks.',
+      'Water quality and pond maintenance risks.',
+      'Seasonal fingerling mortality risks.',
       'Seasonal and market price fluctuations.',
     ];
-  } else if (category === 'retail') {
+  } else if (category.includes('retail') || category.includes('kirana') || category.includes('store') || category.includes('vendor')) {
     localOpportunities = [
-      'Opportunity to serve daily local consumer needs.',
-      'Potential to build repeat customers.',
-      'Possibility of adding new products based on demand.',
+      'Opportunity to serve daily household consumer needs.',
+      'Potential to build loyal repeat customers.',
+      'Possibility of adding high-demand FMCG and grocery items.',
     ];
     localRisks = [
-      'High local competition.',
-      'Inventory management challenges.',
-      'Changing customer preferences.',
+      'Local competition from neighboring stores.',
+      'Working capital tied up in customer credit.',
+      'Inventory spoilage and expiry management.',
+    ];
+  } else if (category.includes('food') || category.includes('bakery') || category.includes('pickle') || category.includes('flour')) {
+    localOpportunities = [
+      'High consumer appetite for fresh local food items without preservatives.',
+      'Festive and wedding bulk orders for snacks, sweets and bakery goods.',
+      'Government PMFME subsidy of 35% on machinery and setup.',
+    ];
+    localRisks = [
+      'Hygiene, shelf-life and food safety compliance requirements.',
+      'Fluctuations in raw material prices (oil, flour, spices, sugar).',
+      'Packaging and moisture control in humid weather.',
+    ];
+  } else if (category.includes('artisan') || category.includes('tailor') || category.includes('garment') || category.includes('weaving') || category.includes('carpenter') || category.includes('blacksmith') || category.includes('potter')) {
+    localOpportunities = [
+      'PM Vishwakarma / Weaver MUDRA 5% subsidized credit and tool kits.',
+      'High demand during wedding, school reopening, and festival seasons.',
+      'Skilled craft differentiation with premium custom pricing.',
+    ];
+    localRisks = [
+      'Seasonal rush followed by lean months.',
+      'Rising cost of raw materials (wood, cloth, yarn, metal).',
+      'Dependence on personal physical labor or skilled assistants.',
+    ];
+  } else if (category.includes('solar') || category.includes('clean') || category.includes('service') || category.includes('repair')) {
+    localOpportunities = [
+      'Government rooftop solar subsidies and green energy push.',
+      'Increasing appliance ownership (smartphones, pumps, motors) needing repair.',
+      'Minimal inventory cost with high service labor margins.',
+    ];
+    localRisks = [
+      'Rapidly changing technical knowledge requirements.',
+      'Dependency on specialized spare parts availability from cities.',
+      'Initial customer acquisition trust-building period.',
     ];
   } else {
     localOpportunities = [
@@ -688,47 +915,61 @@ export function analyzeBusiness(data: BusinessRequest) {
         : 'Candidate niches may be worth testing, but local supply-demand evidence is still required before investment.',
   };
 
-  if (category === 'dairy') {
+  if (category.includes('dairy') || category.includes('milk')) {
     opportunityAnalysis.identified_niches = [
       'Hygienic packaged milk for nearby households',
       'Value-added dairy products such as paneer, curd and ghee',
       'Doorstep dairy delivery for nearby customers',
       'Bulk dairy supply to tea shops, restaurants and small institutions',
     ];
-  } else if (category === 'poultry') {
+  } else if (category.includes('poultry') || category.includes('bird')) {
     opportunityAnalysis.identified_niches = [
       'Cleaned and graded egg supply for local retailers',
       'Direct household egg and poultry delivery',
       'Regular poultry supply contracts with restaurants and hotels',
       'Bundled poultry feed/essential support for nearby small producers',
     ];
-  } else if (category === 'agriculture') {
+  } else if (category.includes('agri') || category.includes('farm') || category.includes('seed')) {
     opportunityAnalysis.identified_niches = [
-      'Last-mile agricultural input delivery',
-      'Custom farm services for small and marginal farmers',
+      'Last-mile agricultural input delivery & certified seeds',
+      'Custom farm implement rental for small and marginal farmers',
       'Crop aggregation, grading and local market linkage',
       'Value-added processing of locally suitable agricultural produce',
     ];
-  } else if (category === 'fishery') {
+  } else if (category.includes('fish')) {
     opportunityAnalysis.identified_niches = [
       'Cleaned and ready-to-cook fish for nearby households',
-      'Doorstep fresh-fish delivery',
+      'Doorstep fresh-fish delivery in thermal insulated bags',
       'Regular fresh-fish supply to restaurants and local retailers',
       'Small-scale ice/cold-chain support for local fish sellers',
     ];
-  } else if (category === 'retail') {
+  } else if (category.includes('retail') || category.includes('kirana') || category.includes('store') || category.includes('vendor')) {
     opportunityAnalysis.identified_niches = [
       'Last-mile delivery of essential goods to nearby households',
       'Digital/phone-based ordering for repeat local customers',
       'Focused stocking of frequently requested local products',
       'Home-delivery service for elderly or mobility-limited customers',
     ];
-  } else if (category === 'service') {
+  } else if (category.includes('food') || category.includes('bakery') || category.includes('pickle') || category.includes('flour')) {
     opportunityAnalysis.identified_niches = [
-      'Mobile repair and maintenance services',
-      'Local bookkeeping and digital business support',
-      'Farm equipment rental or on-demand service support',
-      'Hyper-local transport, delivery or logistics assistance',
+      'Hygienic packed regional snacks, pickles, and spices for weekly haats',
+      'Custom bakery biscuits, buns, and celebration cakes for local celebrations',
+      'Freshly ground wheat flour (chakki atta) and cold-pressed mustard oil',
+      'Bulk supply of papad and savories to village wedding caterers',
+    ];
+  } else if (category.includes('artisan') || category.includes('tailor') || category.includes('garment') || category.includes('weaving') || category.includes('carpenter') || category.includes('blacksmith') || category.includes('potter')) {
+    opportunityAnalysis.identified_niches = [
+      'Designer blouse, school uniform, and festive garment stitching',
+      'Handloom woven traditional fabrics and home furnishing products',
+      'Custom wooden furniture, doors, and agricultural wooden tools',
+      'Repair and restoration of rural household metal/wooden implements',
+    ];
+  } else if (category.includes('solar') || category.includes('clean') || category.includes('service') || category.includes('repair')) {
+    opportunityAnalysis.identified_niches = [
+      'PM Surya Ghar rooftop solar rooftop survey and installation assistance',
+      'On-site smart mobile, tablet, and home inverter/battery repair',
+      'Mechanized septic tank and drain cleaning with safety equipment',
+      'Farm equipment, pump motor, and solar generator maintenance service',
     ];
   } else {
     opportunityAnalysis.identified_niches = [
@@ -1023,14 +1264,16 @@ export function analyzeBusiness(data: BusinessRequest) {
 
   // FINAL RECOMMENDATION
   let recommendation = '';
-  if (feasibility === 'Not Feasible') {
-    recommendation = `${data.business_name} is currently not feasible based on the provided financial information. Review expenses and revenue.`;
-  } else if (feasibility === 'Highly Feasible') {
-    recommendation = `${data.business_name} appears highly feasible based on the provided financial information.`;
-  } else if (feasibility === 'Feasible') {
-    recommendation = `${data.business_name} appears feasible. Continue monitoring expenses and market demand.`;
+  if (dscr < 1.0) {
+    recommendation = `${data.business_name} is currently unfeasible based on the projected loan EMI and profit. Reassess your costs or loan amount.`;
+  } else if (dscr >= 2.0) {
+    recommendation = `${data.business_name} appears exceptionally feasible with healthy profit margins to cover loan commitments comfortably.`;
+  } else if (dscr >= 1.5) {
+    recommendation = `${data.business_name} appears feasible and safe with a reliable profit buffer over monthly loan EMI.`;
+  } else if (dscr >= 1.15) {
+    recommendation = `${data.business_name} is moderately feasible. You can service the loan, but must control daily expenses strictly.`;
   } else {
-    recommendation = `${data.business_name} is moderately feasible. Consider improving profit margins before major expansion.`;
+    recommendation = `${data.business_name} operates on tight margins. High risk of loan default if revenue drops even slightly.`;
   }
 
   return {
@@ -1064,6 +1307,10 @@ export function analyzeBusiness(data: BusinessRequest) {
     },
     profit_projection: profitProjection,
     feasibility,
+    feasibilityVerdict,
+    feasibilityDescription,
+    colorTheme,
+    dscr: Math.round(dscr * 100) / 100,
     recommendation,
     scheme_analysis: {
       scheme_name: schemeName,

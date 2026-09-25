@@ -7,9 +7,22 @@ export default function PageOverview({ result, formatCurrency, lang, onJumpPage 
   const yearlyProfit = result.financial_analysis?.yearly_profit ?? 0;
   const roi = result.financial_analysis?.roi_percentage ?? 0;
   const payback = result.financial_analysis?.payback_period_months;
-  const feasibility = result.feasibility;
+  const colorTheme = result.colorTheme || "green";
 
-  const isGood = monthlyProfit > 0 && feasibility !== "Not Feasible";
+  const themeClasses = {
+    green: "bg-green-50 text-green-900 border-green-200",
+    blue: "bg-blue-50 text-blue-900 border-blue-200",
+    yellow: "bg-yellow-50 text-yellow-900 border-yellow-200",
+    orange: "bg-orange-50 text-orange-900 border-orange-200",
+    red: "bg-red-50 text-red-900 border-red-200",
+  }[colorTheme] || "bg-green-50 text-green-900 border-green-200";
+
+  const verdictTitle = result.feasibilityVerdict || result.feasibility || "Feasible & Safe";
+  const verdictDescription = result.feasibilityDescription || (
+    isHi
+      ? "व्यापार के वित्तीय आँकड़े और किश्त चुकाने की क्षमता का विश्लेषण।"
+      : "Financial metrics and loan debt service feasibility assessment."
+  );
 
   const margin = result.scheme_analysis?.beneficiary_contribution ?? (Number(result.investment) || 0);
   const eligibleLoan = result.scheme_analysis?.eligible_loan ?? Math.max(0, (result.scheme_analysis?.project_cost || (margin / 0.1)) - margin);
@@ -66,33 +79,32 @@ export default function PageOverview({ result, formatCurrency, lang, onJumpPage 
           </p>
         </div>
 
-        <div className={`status-hero-tag ${isGood ? "positive" : "warning"}`}>
+        <div
+          className={`border rounded-xl p-4 sm:p-5 ${themeClasses}`}
+          style={{ maxWidth: "420px" }}
+        >
           <div>
-            <strong>
-              {feasibility === "Highly Feasible"
-                ? isHi
-                  ? "अति उत्तम व्यापार (Highly Feasible)"
-                  : "Highly Feasible & Safe"
-                : feasibility === "Feasible"
-                ? isHi
-                  ? "शुरू करने योग्य व्यापार (Feasible)"
-                  : "Feasible & Recommended"
-                : feasibility === "Moderately Feasible"
-                ? isHi
-                  ? "मध्यम - संभल कर चलें (Moderate)"
-                  : "Moderately Feasible"
-                : isHi
-                ? "जोखिम भरा - खर्च घटाएं (Not Feasible)"
-                : "High Risk - Not Feasible"}
-            </strong>
-            <p>
-              {isGood
-                ? isHi
-                  ? "यह व्यापार गाँव में मुनाफा कमाने के लिए उपयुक्त है।"
-                  : "This business shows positive returns for your village."
-                : isHi
-                ? "खर्चा ज़्यादा है, पहले खर्चे कम करने का विचार करें।"
-                : "Expenses are higher than recommended. Reduce costs first."}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <strong style={{ fontSize: "15px", fontWeight: "700" }}>
+                {verdictTitle}
+              </strong>
+              {result.dscr != null && result.dscr !== 999 && (
+                <span
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: "700",
+                    padding: "2px 7px",
+                    borderRadius: "10px",
+                    border: "1px solid currentColor",
+                    opacity: 0.9,
+                  }}
+                >
+                  DSCR: {result.dscr.toFixed(2)}x
+                </span>
+              )}
+            </div>
+            <p style={{ margin: "4px 0 0", fontSize: "12.5px", lineHeight: "1.4", opacity: 0.95 }}>
+              {verdictDescription}
             </p>
           </div>
         </div>
