@@ -1,4 +1,7 @@
-export default function PageMarket({ result, lang, formData }) {
+import HyperLocalScanner from "./HyperLocalScanner";
+import { getDistrictCoordinates, getCategoryOsmTag } from "../utils/geoUtils";
+
+export default function PageMarket({ result, lang, formData, userCoords, onScanComplete }) {
   const isHi = lang === "hi";
 
   const market = result.hyper_local_profile ?? {};
@@ -13,13 +16,13 @@ export default function PageMarket({ result, lang, formData }) {
     "Supply to Nearest Kasba / Tehsil Mandi",
   ];
 
-  // Dynamically construct searchQuery using existing formData, fallback to India
-  const targetBlock = (formData?.block || result?.block || "").trim();
-  const targetDistrict = (formData?.district || result?.district || "").trim();
-  const searchQuery =
-    targetBlock || targetDistrict
-      ? `${targetBlock ? targetBlock + ", " : ""}${targetDistrict ? targetDistrict + ", " : ""}India`
-      : "India";
+  // Resolve coordinates and OSM tag for HyperLocalScanner
+  const targetDistrict = (formData?.district || result?.district || "Meerut").trim();
+  const targetState = (formData?.state || result?.state || "Uttar Pradesh").trim();
+  const defaultCoords = getDistrictCoordinates(targetDistrict);
+  const userLat = userCoords?.lat ?? formData?.userLat ?? defaultCoords[0];
+  const userLng = userCoords?.lng ?? formData?.userLng ?? defaultCoords[1];
+  const businessCategoryTag = getCategoryOsmTag(formData?.category || result?.category || "Dairy & Milk Products");
 
   return (
     <div className="side-page-content">
@@ -30,48 +33,28 @@ export default function PageMarket({ result, lang, formData }) {
           </span>
           <h2>
             {isHi
-              ? `${result.location || "इलाके"} में बाज़ार व ग्राहकों का विश्लेषण`
-              : `Local Market Demand in ${result.location || "Your Area"}`}
+              ? `${result.location || targetDistrict || "इलाके"} में बाज़ार व ग्राहकों का विश्लेषण`
+              : `Local Market Demand in ${result.location || targetDistrict || "Your Area"}`}
           </h2>
           <p className="page-sub-desc">
             {isHi
-              ? "आपके गाँव और आस-पास के 5 से 10 किलोमीटर के दायरे में ग्राहक और प्रतिद्वंदी (कम्पटीशन) की स्थिति।"
-              : "Hyper-local customer reach, competing shops, and demand strength across a 5-10 km radius."}
+              ? "ओपनस्ट्रीटमैप (Overpass API) द्वारा आपके गाँव व आस-पास के 10-50 किमी के दायरे में बैंकों, मंडियों और प्रतिद्वंदियों का लाइव स्कैन।"
+              : "Live visual scan of banks, mandis, and competitors across 10-50 km radius via OpenStreetMap (Overpass API)."}
           </p>
         </div>
       </div>
 
-      {/* Responsive Local Area Google Map */}
-      <div
-        className="w-full h-48 sm:h-56 rounded-xl shadow-sm overflow-hidden mb-6"
-        style={{
-          width: "100%",
-          height: "220px",
-          borderRadius: "16px",
-          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.08)",
-          overflow: "hidden",
-          marginBottom: "24px",
-          border: 0,
-          backgroundColor: "#f1f5f9",
-          position: "relative",
-        }}
-      >
-        <iframe
-          title="Local Area Market Map"
-          src={`https://maps.google.com/maps?q=${encodeURIComponent(searchQuery)}&output=embed`}
-          className="w-full h-full rounded-xl border-0"
-          style={{
-            width: "100%",
-            height: "100%",
-            border: 0,
-            borderRadius: "16px",
-            display: "block",
-          }}
-          loading="lazy"
-          allowFullScreen
-          referrerPolicy="no-referrer-when-downgrade"
-        />
-      </div>
+      {/* Comprehensive OpenStreetMap & Leaflet Hyper-Local Environment Scanner */}
+      <HyperLocalScanner
+        userLat={userLat}
+        userLng={userLng}
+        businessCategoryTag={businessCategoryTag}
+        onScanComplete={onScanComplete}
+        businessName={formData?.business_name || result?.business || "Kisan Dairy Farm"}
+        district={targetDistrict}
+        state={targetState}
+        lang={lang}
+      />
 
       {/* 4 Market Highlight Cards */}
       <div className="kpi-hero-grid">

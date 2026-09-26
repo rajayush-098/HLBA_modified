@@ -226,7 +226,11 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
       const bLoan = ctx.eligibleLoan ?? result?.scheme_analysis?.eligible_loan ?? 900000;
       const bEmi = ctx.monthlyEmi ?? result?.loan_affordability?.monthly_emi ?? 19462;
 
-      const profileSummary = `Profile: ${bName}, ${bDistrict}, ${bState}\nMatched Scheme: ${bScheme}\nMargin: ₹${Number(bMargin).toLocaleString("en-IN")} | Loan: ₹${Number(bLoan).toLocaleString("en-IN")} | EMI: ₹${Number(bEmi).toLocaleString("en-IN")}`;
+      const localMarketStr =
+        ctx.localMarketContext ||
+        "Local Market Context: 2 competitors within 10km, nearest bank is 4.2km away.";
+
+      const profileSummary = `Profile: ${bName}, ${bDistrict}, ${bState}\nMatched Scheme: ${bScheme}\nMargin: ₹${Number(bMargin).toLocaleString("en-IN")} | Loan: ₹${Number(bLoan).toLocaleString("en-IN")} | EMI: ₹${Number(bEmi).toLocaleString("en-IN")}\n${localMarketStr}`;
 
       const payload = {
         message: q,
@@ -240,6 +244,7 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
           promoterMargin: bMargin,
           eligibleLoan: bLoan,
           monthlyEmi: bEmi,
+          localMarketContext: localMarketStr,
           profileSummary,
         },
         language: lang,

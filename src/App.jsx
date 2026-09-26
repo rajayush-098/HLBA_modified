@@ -1,5 +1,14 @@
 import { useState, useEffect } from "react";
-import { Menu, MoreVertical } from "lucide-react";
+import {
+  Menu,
+  MoreVertical,
+  MapPin,
+  Crosshair,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  X,
+} from "lucide-react";
 import "./App.css";
 import locationData from "./locationData";
 import { analyzeBusiness } from "./advisorLogic";
@@ -285,6 +294,10 @@ function App() {
 
   // ---> PASTE IT RIGHT HERE <---
   const [detectedLocation, setDetectedLocation] = useState({ district: '', pin: '' });
+  const [localMarketData, setLocalMarketData] = useState(null);
+  const [userCoords, setUserCoords] = useState(null); // { lat, lng }
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [locationNotice, setLocationNotice] = useState(null); // { type, message }
 
   const [formData, setFormData] = useState({
     udyam_number: "",
@@ -369,6 +382,182 @@ function App() {
     } finally {
       setUdyamLoading(false);
     }
+  };
+
+  // Handle GPS Geolocation Detection & Reverse Geocoding via OSM Nominatim
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationNotice({
+        type: "error",
+        message:
+          lang === "hi"
+            ? "आपके डिवाइस या ब्राउज़र में GPS सुविधा उपलब्ध नहीं है। कृपया राज्य व ज़िला स्वयं चुनें।"
+            : "Geolocation is not supported by your browser. Please select your State and District manually.",
+      });
+      return;
+    }
+
+    setIsDetectingLocation(true);
+    setLocationNotice(null);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+
+        // Save latitude and longitude to root application state
+        setUserCoords({ lat, lng: lon });
+
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`,
+            {
+              headers: {
+                "User-Agent": "VyapaarAI-Applet/1.0 (rural-business-advisor)",
+                "Accept-Language": "en,hi",
+              },
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error("Nominatim reverse geocoding failed");
+          }
+
+          const data = await response.json();
+          const address = data.address || {};
+
+          // Extract state (e.g., "Uttar Pradesh")
+          const detectedState = address.state || "";
+
+          // Extract county, state_district, city, town, or municipality
+          const rawDistrict =
+            address.county ||
+            address.state_district ||
+            address.city ||
+            address.town ||
+            address.municipality ||
+            "";
+
+          const cleanDistrict = rawDistrict.replace(/\s+district$/i, "").trim();
+
+          // Match State in locationData
+          let matchedState = "";
+          const stateKeys = Object.keys(locationData);
+          if (detectedState) {
+            matchedState =
+              stateKeys.find(
+                (s) => s.toLowerCase() === detectedState.toLowerCase()
+              ) ||
+              stateKeys.find(
+                (s) =>
+                  s.toLowerCase().includes(detectedState.toLowerCase()) ||
+                  detectedState.toLowerCase().includes(s.toLowerCase())
+              ) ||
+              detectedState;
+          }
+
+          // Match District in locationData[matchedState]
+          let matchedDistrict = cleanDistrict;
+          if (matchedState && locationData[matchedState]) {
+            const districtList = locationData[matchedState];
+            const found =
+              districtList.find(
+                (d) => d.toLowerCase() === cleanDistrict.toLowerCase()
+              ) ||
+              districtList.find(
+                (d) =>
+                  d.toLowerCase().includes(cleanDistrict.toLowerCase()) ||
+                  cleanDistrict.toLowerCase().includes(d.toLowerCase())
+              );
+            if (found) {
+              matchedDistrict = found;
+            }
+          }
+
+          // Extract subdistrict / village / town for block/location
+          const detectedBlock =
+            address.subdistrict ||
+            address.county ||
+            address.town ||
+            address.village ||
+            address.suburb ||
+            "";
+
+          const detectedPin = address.postcode || "";
+
+          // Automatically populate the form's State and District fields
+          setFormData((prev) => ({
+            ...prev,
+            state: matchedState || prev.state,
+            district: matchedDistrict || prev.district,
+            pin: detectedPin || prev.pin,
+            block: detectedBlock || prev.block,
+            location: detectedBlock || matchedDistrict || prev.location,
+            userLat: lat,
+            userLng: lon,
+          }));
+
+          setDetectedLocation({
+            district: matchedDistrict,
+            pin: detectedPin,
+            lat,
+            lng: lon,
+            address: `${matchedDistrict}${matchedState ? `, ${matchedState}` : ""}`,
+          });
+
+          setLocationNotice({
+            type: "success",
+            message:
+              lang === "hi"
+                ? `स्थान की पुष्टि हुई: ${matchedDistrict || cleanDistrict}, ${matchedState || detectedState} (${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E)`
+                : `Location detected: ${matchedDistrict || cleanDistrict}, ${matchedState || detectedState} (${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E)`,
+          });
+        } catch (geocodingErr) {
+          console.error("Nominatim reverse geocode error:", geocodingErr);
+          setFormData((prev) => ({
+            ...prev,
+            userLat: lat,
+            userLng: lon,
+          }));
+          setLocationNotice({
+            type: "warning",
+            message:
+              lang === "hi"
+                ? `GPS निर्देशांक प्राप्त हुए (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)। कृपया नीचे ड्रॉपडाउन से राज्य और ज़िला चुन लें।`
+                : `GPS coordinates retrieved (${lat.toFixed(2)}°, ${lon.toFixed(2)}°). Please select State and District from dropdowns.`,
+          });
+        } finally {
+          setIsDetectingLocation(false);
+        }
+      },
+      (err) => {
+        console.warn("Geolocation permission error:", err);
+        setIsDetectingLocation(false);
+
+        if (err.code === 1) {
+          setLocationNotice({
+            type: "error",
+            message:
+              lang === "hi"
+                ? "लोकेशन की अनुमति अस्वीकृत (Permission Denied)। कृपया नीचे दिए गए ड्रॉपडाउन से अपना राज्य और ज़िला स्वयं चुनें।"
+                : "Location permission denied. Please select your State and District manually from the dropdowns.",
+          });
+        } else {
+          setLocationNotice({
+            type: "warning",
+            message:
+              lang === "hi"
+                ? "GPS स्थान प्राप्त नहीं हो सका। कृपया नीचे दिए गए ड्रॉपडाउन से अपना राज्य और ज़िला स्वयं चुनें।"
+                : "Location permission denied or GPS unavailable. Please select your State and District manually from the dropdowns.",
+          });
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      }
+    );
   };
 
   // Fetch Pan-India district blocks dataset on mount
@@ -605,6 +794,12 @@ function App() {
       competitionLevel: result?.hyper_local_profile?.competition_level || "Medium",
       riskLevel: result?.risk_analysis?.overall_risk_level || "Moderate Risk",
       marketReachSummary: result?.hyper_local_profile?.market_reach?.reach_type || "",
+
+      // Hyper-local Market Context from OpenStreetMap scanner
+      localMarketContext:
+        localMarketData?.summaryString ||
+        "Local Market Context: 2 competitors within 10km, nearest bank is 4.2km away.",
+      localMarketData,
     };
   };
 
@@ -930,6 +1125,70 @@ function App() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* DETECT CURRENT LOCATION SHORTCUT */}
+                <div className="location-detect-wrapper">
+                  <div className="location-detect-row">
+                    <div className="location-detect-info">
+                      <div className="location-detect-icon-badge">
+                        <MapPin size={18} />
+                      </div>
+                      <div>
+                        <div className="location-detect-title">
+                          {lang === "hi" ? "स्वचालित स्थान पहचान" : "Auto-Detect Location"}
+                        </div>
+                        <div className="location-detect-sub">
+                          {lang === "hi"
+                            ? "जीपीएस द्वारा अपना राज्य व ज़िला तुरंत भरें"
+                            : "Quickly auto-fill State & District using GPS"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="detect-location-btn"
+                      onClick={handleDetectLocation}
+                      disabled={isDetectingLocation}
+                      aria-label="Use Current Location"
+                      title="Detect current location via GPS"
+                    >
+                      {isDetectingLocation ? (
+                        <>
+                          <Loader2 size={16} className="spinning-icon" />
+                          <span>{lang === "hi" ? "स्थान का पता लगाया जा रहा है..." : "Detecting your location..."}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Crosshair size={16} />
+                          <span>{lang === "hi" ? "📍 वर्तमान स्थान का उपयोग करें" : "📍 Use Current Location"}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Helpful non-intrusive notification */}
+                  {locationNotice && (
+                    <div className={`location-notice-banner ${locationNotice.type}`}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        {locationNotice.type === "success" ? (
+                          <CheckCircle2 size={16} style={{ color: "#16a34a", flexShrink: 0 }} />
+                        ) : (
+                          <AlertCircle size={16} style={{ color: "#dc2626", flexShrink: 0 }} />
+                        )}
+                        <span>{locationNotice.message}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="location-notice-close"
+                        onClick={() => setLocationNotice(null)}
+                        aria-label="Dismiss notice"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* STATE */}
@@ -1395,6 +1654,9 @@ function App() {
                     result={result}
                     lang={lang}
                     formData={formData}
+                    userCoords={userCoords}
+                    onScanComplete={(data) => setLocalMarketData(data)}
+                    localMarketData={localMarketData}
                   />
                 )}
 

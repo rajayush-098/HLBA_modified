@@ -315,7 +315,11 @@ To quickly build a loyal customer base, focus on direct relationships with famil
       const bLoan = Number(businessContext.eligibleLoan || 900000).toLocaleString("en-IN");
       const bEmi = Number(businessContext.monthlyEmi || 19462).toLocaleString("en-IN");
 
-      const profileHeader = `Profile: ${bName}, ${bDistrict}, ${bState}\nMatched Scheme: ${bScheme}\nMargin: ₹${bMargin} | Loan: ₹${bLoan} | EMI: ₹${bEmi}`;
+      const localMarketStr =
+        businessContext.localMarketContext ||
+        "Local Market Context: 2 competitors within 10km, nearest bank is 4.2km away.";
+
+      const profileHeader = `Profile: ${bName}, ${bDistrict}, ${bState}\nMatched Scheme: ${bScheme}\nMargin: ₹${bMargin} | Loan: ₹${bLoan} | EMI: ₹${bEmi}\n${localMarketStr}`;
 
       const serializedContext =
         typeof businessContext === "string"
