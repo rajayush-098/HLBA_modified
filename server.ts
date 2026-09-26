@@ -21,7 +21,14 @@ function getGeminiClient(): GoogleGenAI | null {
   }
   if (!genAIClient) {
     try {
-      genAIClient = new GoogleGenAI({ apiKey });
+      genAIClient = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
+        },
+      });
     } catch (err) {
       console.error("Failed to initialize GoogleGenAI client:", err);
       return null;
@@ -81,7 +88,7 @@ Core Guidelines:
 ${contextStr}`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         contents: message,
         config: {
           systemInstruction,
@@ -240,10 +247,19 @@ STRICT CONSTRAINTS:
         if (!geminiClient) {
           throw new Error("GEMINI_API_KEY is not configured");
         }
-        const aiResponse = await geminiClient.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: prompt,
-        });
+        let aiResponse;
+        try {
+          aiResponse = await geminiClient.models.generateContent({
+            model: "gemini-3.8-flash",
+            contents: prompt,
+          });
+        } catch (e1) {
+          console.warn("gemini-3.8-flash failed in analyze, falling back to gemini-flash-latest:", e1);
+          aiResponse = await geminiClient.models.generateContent({
+            model: "gemini-flash-latest",
+            contents: prompt,
+          });
+        }
         market_summary = aiResponse.text ? aiResponse.text.trim() : "";
       } catch (geminiErr: any) {
         console.error("Gemini market summary error:", geminiErr);
@@ -268,18 +284,220 @@ To quickly build a loyal customer base, focus on direct relationships with famil
   app.post("/analyze", analyzeHandler);
   app.post("/api/analyze", analyzeHandler);
 
-  const advisorHandler = (req: express.Request, res: express.Response) => {
+  const advisorHandler = async (req: express.Request, res: express.Response) => {
     try {
-      const result = handleAdvisor(req.body);
-      res.json(result);
+      const message = (req.body?.message || req.body?.question || "").trim();
+      const businessContext = req.body?.businessContext || req.body?.context || {};
+
+      if (!message) {
+        res.status(400).json({ error: "Message or question is required" });
+        return;
+      }
+
+      // Language handling
+      const languageMap: Record<string, string> = {
+        hi: "Hindi",
+        en: "English",
+        hinglish: "Hinglish (conversational Hindi written in English/Latin script)",
+        mr: "Marathi",
+        bn: "Bengali",
+        te: "Telugu",
+        ta: "Tamil",
+      };
+      const rawLang = req.body?.selectedLanguage || req.body?.language || "Hindi";
+      const selectedLanguage = languageMap[rawLang] || rawLang;
+
+      const bName = businessContext.businessName || "Kisan Dairy Farm";
+      const bDistrict = businessContext.district || "Meerut";
+      const bState = businessContext.state || "UP";
+      const bScheme = businessContext.matchedScheme || "PM FME";
+      const bMargin = Number(businessContext.promoterMargin || 100000).toLocaleString("en-IN");
+      const bLoan = Number(businessContext.eligibleLoan || 900000).toLocaleString("en-IN");
+      const bEmi = Number(businessContext.monthlyEmi || 19462).toLocaleString("en-IN");
+
+      const profileHeader = `Profile: ${bName}, ${bDistrict}, ${bState}\nMatched Scheme: ${bScheme}\nMargin: ₹${bMargin} | Loan: ₹${bLoan} | EMI: ₹${bEmi}`;
+
+      const serializedContext =
+        typeof businessContext === "string"
+          ? businessContext
+          : `${profileHeader}\n\n${JSON.stringify(businessContext, null, 2)}`;
+
+      const systemInstruction = `You are an expert rural business mentor in India. You are advising an entrepreneur on the following business profile:
+
+${serializedContext}
+
+Analyze their numbers carefully. When answering, reference their specific figures (e.g., project cost, scheme rules, and local feasibility). Provide clear, realistic, and practical steps in simple language. Avoid generic boilerplate.
+Ensure the final output is generated entirely in the following language: ${selectedLanguage}.`;
+
+      const geminiClient = getGeminiClient();
+      if (!geminiClient) {
+        // Fallback to local rule-based advisor logic if no key configured
+        const fallback = handleAdvisor({
+          question: message,
+          business_name: bName,
+          category: businessContext.businessType || "Dairy Farm",
+          monthly_revenue: businessContext.monthlyRevenue,
+          monthly_expenses: businessContext.monthlyExpenses,
+          monthly_profit: businessContext.monthlyProfit,
+          roi_percentage: businessContext.roiPercentage,
+          affordability_status: businessContext.affordabilityStatus,
+          monthly_emi: businessContext.monthlyEmi || 19462,
+          local_demand: businessContext.localDemand,
+          competition_level: businessContext.competitionLevel,
+          feasibility: businessContext.feasibility,
+        });
+        res.json({
+          reply: fallback.answer,
+          answer: fallback.answer,
+          text: fallback.answer,
+          source: "fallback",
+        });
+        return;
+      }
+
+      // Streaming response if client requested SSE or stream
+      const isStream = Boolean(req.body?.stream || req.headers.accept?.includes("text/event-stream"));
+      if (isStream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+
+        try {
+          const responseStream = await geminiClient.models.generateContentStream({
+            model: "gemini-3.8-flash",
+            contents: message,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+            },
+          });
+
+          for await (const chunk of responseStream) {
+            const text = chunk.text || "";
+            if (text) {
+              res.write(`data: ${JSON.stringify({ text })}\n\n`);
+            }
+          }
+          res.write("data: [DONE]\n\n");
+          res.end();
+          return;
+        } catch (streamErr) {
+          console.warn("Gemini streaming error, attempting fallback to gemini-flash-latest:", streamErr);
+          const fallbackStream = await geminiClient.models.generateContentStream({
+            model: "gemini-flash-latest",
+            contents: message,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+            },
+          });
+          for await (const chunk of fallbackStream) {
+            const text = chunk.text || "";
+            if (text) {
+              res.write(`data: ${JSON.stringify({ text })}\n\n`);
+            }
+          }
+          res.write("data: [DONE]\n\n");
+          res.end();
+          return;
+        }
+      }
+
+      // Non-streaming standard JSON response
+      let answerText = "";
+      try {
+        const response = await geminiClient.models.generateContent({
+          model: "gemini-3.8-flash",
+          contents: message,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+          },
+        });
+        answerText = response.text ? response.text.trim() : "";
+      } catch (genErr) {
+        console.warn("gemini-3.8-flash failed, trying gemini-flash-latest:", genErr);
+        try {
+          const fallbackAi = await geminiClient.models.generateContent({
+            model: "gemini-flash-latest",
+            contents: message,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+            },
+          });
+          answerText = fallbackAi.text ? fallbackAi.text.trim() : "";
+        } catch (genErr2) {
+          console.warn("gemini-flash-latest failed, trying gemini-3.1-flash-lite:", genErr2);
+          try {
+            const fallbackAi2 = await geminiClient.models.generateContent({
+              model: "gemini-3.1-flash-lite",
+              contents: message,
+              config: {
+                systemInstruction,
+                temperature: 0.7,
+              },
+            });
+            answerText = fallbackAi2.text ? fallbackAi2.text.trim() : "";
+          } catch (genErr3) {
+            console.error("All Gemini models failed:", genErr3);
+          }
+        }
+      }
+
+      if (answerText) {
+        res.json({
+          answer: answerText,
+          reply: answerText,
+          text: answerText,
+          source: "gemini",
+        });
+        return;
+      }
+
+      // If text generation did not yield content, invoke contextual mentor
+      const fallback = handleAdvisor({
+        question: message,
+        business_name: bName,
+        category: businessContext.businessType || "Dairy Farm",
+        monthly_revenue: Number(businessContext.monthlyRevenue || 60000),
+        monthly_expenses: Number(businessContext.monthlyExpenses || 25000),
+        monthly_profit: Number(businessContext.monthlyProfit || 35000),
+        monthly_emi: Number(businessContext.monthlyEmi || 19462),
+        local_demand: businessContext.localDemand || "High",
+        competition_level: businessContext.competitionLevel || "Medium",
+        feasibility: businessContext.feasibility || "Feasible",
+      });
+      res.json({
+        answer: fallback.answer,
+        reply: fallback.answer,
+        text: fallback.answer,
+        source: "fallback",
+      });
     } catch (err: any) {
       console.error("Advisor error:", err);
-      res.status(500).json({ error: err?.message || "Failed to process advisor request" });
+      const fallback = handleAdvisor({
+        question: req.body?.message || req.body?.question || "",
+        business_name: req.body?.businessContext?.businessName || "Kisan Dairy Farm",
+        category: req.body?.businessContext?.businessType || "Dairy Farm",
+        monthly_revenue: Number(req.body?.businessContext?.monthlyRevenue || 60000),
+        monthly_expenses: Number(req.body?.businessContext?.monthlyExpenses || 25000),
+        monthly_profit: Number(req.body?.businessContext?.monthlyProfit || 35000),
+        monthly_emi: Number(req.body?.businessContext?.monthlyEmi || 19462),
+      });
+      res.json({
+        answer: fallback.answer,
+        reply: fallback.answer,
+        text: fallback.answer,
+        source: "fallback",
+        warning: err?.message || "Using fallback advisor",
+      });
     }
   };
 
   app.post("/advisor", advisorHandler);
   app.post("/api/advisor", advisorHandler);
+  app.post("/api/advisor-chat", advisorHandler);
 
   // Udyam Registration Verification Route
   app.post("/api/verify-udyam", async (req: express.Request, res: express.Response) => {

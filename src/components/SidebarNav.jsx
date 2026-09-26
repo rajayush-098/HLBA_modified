@@ -1,3 +1,6 @@
+import { useEffect } from "react";
+import { X, Layers } from "lucide-react";
+
 export default function SidebarNav({
   pages,
   activePageId,
@@ -9,19 +12,50 @@ export default function SidebarNav({
   t,
   onEditDetails,
 }) {
+  // Listen for Escape key to close the menu
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   return (
     <>
-      {/* Backdrop for mobile */}
-      {isOpen && (
-        <div
-          className="sidebar-backdrop"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      )}
+      {/* Smooth Backdrop with blur */}
+      <div
+        className={`sidebar-backdrop ${isOpen ? "open" : ""}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
 
-      <aside className={`analysis-sidebar ${isOpen ? "open" : ""}`}>
+      <aside
+        className={`analysis-sidebar ${isOpen ? "open" : ""}`}
+        aria-label="Side Pages Menu"
+      >
         <div className="sidebar-header">
+          {/* Top Row with Badge & Close Button */}
+          <div className="sidebar-header-top-row">
+            <div className="sidebar-drawer-badge">
+              <Layers size={13} style={{ color: "var(--primary)" }} />
+              <span>{lang === "hi" ? "11 चरण नेविगेशन" : "11 Steps Navigation"}</span>
+            </div>
+
+            <button
+              type="button"
+              className="sidebar-close-btn"
+              onClick={onClose}
+              aria-label="Close menu"
+              title={lang === "hi" ? "मेन्यू बंद करें (Esc)" : "Close menu (Esc)"}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
           <div className="sidebar-business-info">
             <div>
               <h3 className="sidebar-biz-name" title={result?.business}>

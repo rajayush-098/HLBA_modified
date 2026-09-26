@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Menu, MoreVertical } from "lucide-react";
 import "./App.css";
 import locationData from "./locationData";
 import { analyzeBusiness } from "./advisorLogic";
@@ -539,6 +540,72 @@ function App() {
     }
     stopSpeaking();
     setIsSpeaking(false);
+  };
+
+  // Helper that aggregates user inputs and calculated metrics into businessContext
+  const getBusinessContext = () => {
+    const projectCost =
+      result?.scheme_analysis?.project_cost ||
+      (Number(formData.investment || 100000) / 0.1) || 1000000;
+    const promoterMargin =
+      result?.scheme_analysis?.margin_capital ||
+      result?.scheme_analysis?.beneficiary_contribution ||
+      Number(formData.investment || 100000);
+    const eligibleLoan =
+      result?.scheme_analysis?.eligible_loan ||
+      (projectCost * 0.9) || 900000;
+    const matchedScheme =
+      result?.scheme_analysis?.scheme_name ||
+      result?.matched_scheme?.scheme_name ||
+      "PM FME";
+    const interestRate =
+      result?.scheme_analysis?.interest_rate ||
+      result?.loan_affordability?.interest_rate ||
+      "8.5%";
+
+    // 12-month projected margins
+    const twelveMonthProjectedMargins =
+      result?.profit_projection?.monthly_breakdown?.map((m) => ({
+        month: m.month,
+        profit: m.estimated_profit || m.net_profit,
+        accumulated: m.accumulated_savings,
+        marginPercentage: m.profit_margin || result?.advanced_financial_analysis?.profit_margin || 0,
+      })) || [];
+
+    return {
+      // User inputs (exact keys requested)
+      businessType: formData.category || result?.category || "Dairy Farm",
+      district: formData.district || result?.district || "Meerut",
+      state: formData.state || result?.state || "UP",
+      totalInvestment: Number(formData.investment) || result?.financial_analysis?.initial_investment || 100000,
+
+      // Calculated metrics (exact keys requested)
+      promoterMargin,
+      eligibleLoan,
+      matchedScheme,
+      interestRate,
+      projectedMargins: twelveMonthProjectedMargins,
+      twelveMonthProjectedMargins,
+
+      // Additional comprehensive metrics for deep advisor grounding
+      businessName: formData.business_name || result?.business || "Kisan Dairy Farm",
+      block: formData.block || result?.block || "Meerut",
+      location: formData.location || result?.location || "",
+      experience: formData.experience || result?.experience || "Beginner",
+      totalProjectCost: projectCost,
+      monthlyRevenue: result?.financial_analysis?.monthly_revenue || Number(formData.monthly_revenue || 60000),
+      monthlyExpenses: result?.financial_analysis?.monthly_expenses || Number(formData.monthly_expenses || 25000),
+      monthlyProfit: result?.financial_analysis?.monthly_profit || (Number(formData.monthly_revenue || 60000) - Number(formData.monthly_expenses || 25000)),
+      yearlyProfit: result?.financial_analysis?.yearly_profit || 420000,
+      monthlyEmi: result?.loan_affordability?.monthly_emi || 19462,
+      loanTenureMonths: result?.loan_affordability?.loan_tenure_months || 36,
+      moratoriumMonths: result?.loan_affordability?.moratorium_months || 3,
+      feasibility: result?.feasibilityVerdict || result?.feasibility || "Feasible",
+      localDemand: result?.hyper_local_profile?.local_demand || "Medium",
+      competitionLevel: result?.hyper_local_profile?.competition_level || "Medium",
+      riskLevel: result?.risk_analysis?.overall_risk_level || "Moderate Risk",
+      marketReachSummary: result?.hyper_local_profile?.market_reach?.reach_type || "",
+    };
   };
 
   const validateForm = () => {
@@ -1181,17 +1248,43 @@ function App() {
         ) : (
           /* ================= BUSINESS ANALYSIS HUB WITH MANY SIDE PAGES ================= */
           <div className="analysis-hub-layout">
+            {/* Sleek Floating Quick-Access Toggle Button on screen edge */}
+            {!isSidebarOpen && (
+              <button
+                type="button"
+                className="floating-menu-toggle-btn no-print"
+                onClick={() => setIsSidebarOpen(true)}
+                aria-label="Open 11 Steps Menu"
+                title={lang === "hi" ? "11 चरण मेन्यू खोलें" : "Open 11 Steps Menu"}
+              >
+                <div className="floating-btn-inner">
+                  <MoreVertical size={16} />
+                  <span className="floating-btn-text">
+                    {lang === "hi" ? "11 चरण मेन्यू" : "11 Steps Menu"}
+                  </span>
+                  <span className="floating-btn-badge">
+                    {currentIndex + 1}/11
+                  </span>
+                </div>
+              </button>
+            )}
+
             {/* Top Navigation Bar inside Results View */}
             <div className="hub-top-strip no-print">
               <div className="hub-top-left">
                 <button
                   type="button"
-                  className="mobile-sidebar-toggle-btn"
+                  className="hub-nav-toggle-btn"
                   onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                  aria-label="Toggle Side Pages Menu"
+                  aria-label="Toggle 11 Steps Menu"
+                  title={isSidebarOpen ? "Close menu" : "Open 11 steps menu"}
                 >
+                  <Menu size={17} className="toggle-icon-dots" />
                   <span className="toggle-label">
-                    {lang === "hi" ? "पेज मेन्यू (Menu)" : "Side Pages"}
+                    {lang === "hi" ? "11 चरण मेन्यू" : "11 Steps Menu"}
+                  </span>
+                  <span className="toggle-current-badge">
+                    {currentIndex + 1}/11
                   </span>
                 </button>
 
@@ -1333,6 +1426,7 @@ function App() {
                     result={result}
                     lang={lang}
                     formatCurrency={formatCurrency}
+                    businessContext={getBusinessContext()}
                   />
                 )}
 
