@@ -125,8 +125,8 @@ export default function HyperLocalScanner({
 
   // Scan items
   const [competitors, setCompetitors] = useState([]);
-  const [financialNodes, setFinancialNodes] = useState([]);
-  const [logisticsNodes, setLogisticsNodes] = useState([]);
+  const [banks, setBanks] = useState([]);
+  const [mandis, setMandis] = useState([]);
 
   // Metric summaries
   const [nearestBank, setNearestBank] = useState(null);
@@ -146,72 +146,102 @@ export default function HyperLocalScanner({
   // Process raw elements and calculate distances
   const processElements = useCallback(
     (elements, centerLat, centerLng) => {
-      const parsedCompetitors = [];
-      const parsedBanks = [];
-      const parsedMarkets = [];
+      // Filter for banks
+      const foundBanks = elements
+        .filter((el) => el.tags && el.tags.amenity === "bank")
+        .map((el, idx) => {
+          const lat = el.lat ?? el.center?.lat;
+          const lon = el.lon ?? el.center?.lon;
+          const distKm = lat && lon ? calculateHaversineDistance(centerLat, centerLng, lat, lon) : 0;
+          const tags = el.tags || {};
+          const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || `Bank #${idx + 1}`;
+          return {
+            id: el.id ? String(el.id) : `bank-${idx}`,
+            name,
+            lat,
+            lon,
+            lng: lon,
+            distKm,
+            tags,
+            type: "bank",
+          };
+        })
+        .filter((b) => b.lat && b.lon);
 
-      elements.forEach((el, index) => {
-        const itemLat = el.lat ?? el.center?.lat;
-        const itemLng = el.lon ?? el.center?.lon;
-        if (!itemLat || !itemLng) return;
+      // Filter for mandis/marketplaces/warehouses
+      const foundMandis = elements
+        .filter((el) => el.tags && (el.tags.amenity === "marketplace" || el.tags.building === "warehouse"))
+        .map((el, idx) => {
+          const lat = el.lat ?? el.center?.lat;
+          const lon = el.lon ?? el.center?.lon;
+          const distKm = lat && lon ? calculateHaversineDistance(centerLat, centerLng, lat, lon) : 0;
+          const tags = el.tags || {};
+          const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || `Mandi / Warehouse #${idx + 1}`;
+          return {
+            id: el.id ? String(el.id) : `mandi-${idx}`,
+            name,
+            lat,
+            lon,
+            lng: lon,
+            distKm,
+            tags,
+            type: "market",
+          };
+        })
+        .filter((m) => m.lat && m.lon);
 
-        const distance = calculateHaversineDistance(centerLat, centerLng, itemLat, itemLng);
-        const tags = el.tags || {};
-        const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || "Unnamed Local Resource";
+      // Filter for competitors (any shop or craft)
+      const foundShops = elements
+        .filter((el) => el.tags && (el.tags.shop || el.tags.craft))
+        .map((el, idx) => {
+          const lat = el.lat ?? el.center?.lat;
+          const lon = el.lon ?? el.center?.lon;
+          const distKm = lat && lon ? calculateHaversineDistance(centerLat, centerLng, lat, lon) : 0;
+          const tags = el.tags || {};
+          const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || `Shop #${idx + 1}`;
+          return {
+            id: el.id ? String(el.id) : `shop-${idx}`,
+            name,
+            lat,
+            lon,
+            lng: lon,
+            distKm,
+            tags,
+            type: "competitor",
+          };
+        })
+        .filter((s) => s.lat && s.lon);
 
-        const item = {
-          id: el.id ? String(el.id) : `res-${index}`,
-          name,
-          lat: itemLat,
-          lng: itemLng,
-          distKm: distance,
-          tags,
-          type: el.type,
-          category: el.category,
-        };
+      foundShops.sort((a, b) => a.distKm - b.distKm);
+      foundBanks.sort((a, b) => a.distKm - b.distKm);
+      foundMandis.sort((a, b) => a.distKm - b.distKm);
 
-        if (el.type === "competitor" || (!el.type && tags.shop) || (!el.type && tags.craft)) {
-          item.type = "competitor";
-          parsedCompetitors.push(item);
-        } else if (el.type === "bank" || (!el.type && tags.amenity === "bank")) {
-          item.type = "bank";
-          parsedBanks.push(item);
-        } else if (
-          el.type === "market" ||
-          (!el.type && (tags.amenity === "marketplace" || tags.building === "warehouse"))
-        ) {
-          item.type = "market";
-          parsedMarkets.push(item);
-        }
-      });
+      // Safely update state
+      setBanks(foundBanks);
+      setMandis(foundMandis);
+      setCompetitors(foundShops);
 
-      parsedCompetitors.sort((a, b) => a.distKm - b.distKm);
-      parsedBanks.sort((a, b) => a.distKm - b.distKm);
-      parsedMarkets.sort((a, b) => a.distKm - b.distKm);
+      console.log(`Parsed successfully: ${foundBanks.length} Banks, ${foundShops.length} Shops, ${foundMandis.length} Mandis`);
 
-      setCompetitors(parsedCompetitors);
-      setFinancialNodes(parsedBanks);
-      setLogisticsNodes(parsedMarkets);
-
-      const closestBank = parsedBanks.length > 0 ? parsedBanks[0] : null;
-      const closestMarket = parsedMarkets.length > 0 ? parsedMarkets[0] : null;
+      const closestBank = foundBanks.length > 0 ? foundBanks[0] : null;
+      const closestMarket = foundMandis.length > 0 ? foundMandis[0] : null;
       setNearestBank(closestBank);
       setNearestMarket(closestMarket);
 
-      const compCount = parsedCompetitors.length;
+      const compCount = foundShops.length;
       let calculatedSatScore = isHi
-        ? `अधिक कम्पटीशन - ${compCount} समान दुकानें मिलीं`
-        : `High Competition - ${compCount} similar shops found`;
+        ? `अधिक कम्पटीशन - ${compCount} समान इकाइयाँ मिलीं`
+        : `High Competition - ${compCount} units found`;
 
       if (compCount === 0) {
         calculatedSatScore = isHi
           ? `शून्य कम्पटीशन - 10km दायरे में कोई समान दुकान नहीं`
           : `No Competition - 0 similar shops found`;
-      } else if (compCount <= 2) {
+      } else if (compCount <= 5) {
         calculatedSatScore = isHi
           ? `कम कम्पटीशन - ${compCount} समान दुकानें मिलीं`
           : `Low Competition - ${compCount} similar shops found`;
-      } else if (compCount <= 5) {
+      } else if (compCount <= 25) {
         calculatedSatScore = isHi
           ? `मध्यम कम्पटीशन - ${compCount} समान दुकानें मिलीं`
           : `Moderate Competition - ${compCount} similar shops found`;
@@ -220,9 +250,9 @@ export default function HyperLocalScanner({
       setMarketSaturationScore(calculatedSatScore);
 
       return {
-        competitors: parsedCompetitors,
-        banks: parsedBanks,
-        markets: parsedMarkets,
+        competitors: foundShops,
+        banks: foundBanks,
+        markets: foundMandis,
         closestBank,
         closestMarket,
         calculatedSatScore,
@@ -372,8 +402,8 @@ out center;
   }, [userLat, userLng, searchRadius]);
 
   const displayedCompetitors = activeFilter === "all" || activeFilter === "competitors" ? competitors : [];
-  const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? financialNodes : [];
-  const displayedMarkets = activeFilter === "all" || activeFilter === "markets" ? logisticsNodes : [];
+  const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? banks : [];
+  const displayedMarkets = activeFilter === "all" || activeFilter === "markets" ? mandis : [];
 
   return (
     <div
@@ -592,7 +622,7 @@ out center;
               color: activeFilter === "all" ? "#1e40af" : "#475569",
             }}
           >
-            {isHi ? "सभी दिखाएँ" : "All Resources"} ({competitors.length + financialNodes.length + logisticsNodes.length})
+            {isHi ? "सभी दिखाएँ" : "All Resources"} ({competitors.length + banks.length + mandis.length})
           </button>
 
           <button
@@ -628,7 +658,7 @@ out center;
             }}
           >
             <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#16a34a", marginRight: "5px" }}></span>
-            {isHi ? "बैंक व वित्त" : "Banks"} ({financialNodes.length})
+            {isHi ? "बैंक व वित्त" : "Banks"} ({banks.length})
           </button>
 
           <button
@@ -646,7 +676,7 @@ out center;
             }}
           >
             <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#2563eb", marginRight: "5px" }}></span>
-            {isHi ? "मंडी व गोदाम" : "Mandis / Warehouses"} ({logisticsNodes.length})
+            {isHi ? "मंडी व गोदाम" : "Mandis / Warehouses"} ({mandis.length})
           </button>
         </div>
 
@@ -728,76 +758,91 @@ out center;
           </Marker>
 
           {/* Competitor Markers (Red Storefront Icon) */}
-          {displayedCompetitors.map((item) => (
-            <Marker
-              key={item.id}
-              position={[item.lat, item.lng]}
-              icon={createCustomMarkerIcon("competitor")}
-            >
-              <Popup>
-                <div style={{ padding: "4px 2px", minWidth: "180px" }}>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#dc2626", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
-                    <Store size={12} />
-                    <span>{isHi ? "प्रतिद्वंदी दुकान" : "Competitor"}</span>
+          {displayedCompetitors.map((node) => {
+            const lat = node.lat || (node.center && node.center.lat);
+            const lon = node.lon || node.lng || (node.center && node.center.lon);
+            if (!lat || !lon) return null;
+            return (
+              <Marker
+                key={node.id}
+                position={[lat, lon]}
+                icon={createCustomMarkerIcon("competitor")}
+              >
+                <Popup>
+                  <div style={{ padding: "4px 2px", minWidth: "180px" }}>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#dc2626", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                      <Store size={12} />
+                      <span>{isHi ? "प्रतिद्वंदी दुकान" : "Competitor"}</span>
+                    </div>
+                    <strong style={{ display: "block", color: "#0f172a", fontSize: "13px", marginTop: "2px" }}>
+                      {node.name}
+                    </strong>
+                    <div style={{ marginTop: "6px", fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
+                      📏 {node.distKm} km {isHi ? "दूर (सीधी दूरी)" : "straight-line distance"}
+                    </div>
                   </div>
-                  <strong style={{ display: "block", color: "#0f172a", fontSize: "13px", marginTop: "2px" }}>
-                    {item.name}
-                  </strong>
-                  <div style={{ marginTop: "6px", fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
-                    📏 {item.distKm} km {isHi ? "दूर (सीधी दूरी)" : "straight-line distance"}
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
+                </Popup>
+              </Marker>
+            );
+          })}
 
           {/* Financial Infrastructure Markers (Green Rupee / Bank Icon) */}
-          {displayedBanks.map((item) => (
-            <Marker
-              key={item.id}
-              position={[item.lat, item.lng]}
-              icon={createCustomMarkerIcon("bank")}
-            >
-              <Popup>
-                <div style={{ padding: "4px 2px", minWidth: "180px" }}>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#16a34a", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
-                    <Landmark size={12} />
-                    <span>{isHi ? "बैंक / वित्तीय शाखा" : "Bank / Financial Service"}</span>
+          {displayedBanks.map((node) => {
+            const lat = node.lat || (node.center && node.center.lat);
+            const lon = node.lon || node.lng || (node.center && node.center.lon);
+            if (!lat || !lon) return null;
+            return (
+              <Marker
+                key={node.id}
+                position={[lat, lon]}
+                icon={createCustomMarkerIcon("bank")}
+              >
+                <Popup>
+                  <div style={{ padding: "4px 2px", minWidth: "180px" }}>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#16a34a", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                      <Landmark size={12} />
+                      <span>{isHi ? "बैंक / वित्तीय शाखा" : "Bank / Financial Service"}</span>
+                    </div>
+                    <strong style={{ display: "block", color: "#0f172a", fontSize: "13px", marginTop: "2px" }}>
+                      {node.name}
+                    </strong>
+                    <div style={{ marginTop: "6px", fontSize: "12px", color: "#16a34a", fontWeight: 700 }}>
+                      🏦 {node.distKm} km {isHi ? "दूरी" : "distance"}
+                    </div>
                   </div>
-                  <strong style={{ display: "block", color: "#0f172a", fontSize: "13px", marginTop: "2px" }}>
-                    {item.name}
-                  </strong>
-                  <div style={{ marginTop: "6px", fontSize: "12px", color: "#16a34a", fontWeight: 700 }}>
-                    🏦 {item.distKm} km {isHi ? "दूरी" : "distance"}
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
+                </Popup>
+              </Marker>
+            );
+          })}
 
           {/* Marketplace / Warehouse Markers (Blue Truck / Market Icon) */}
-          {displayedMarkets.map((item) => (
-            <Marker
-              key={item.id}
-              position={[item.lat, item.lng]}
-              icon={createCustomMarkerIcon("market")}
-            >
-              <Popup>
-                <div style={{ padding: "4px 2px", minWidth: "180px" }}>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#2563eb", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
-                    <Truck size={12} />
-                    <span>{isHi ? "मंडी / गोदाम" : "Marketplace / Logistics"}</span>
+          {displayedMarkets.map((node) => {
+            const lat = node.lat || (node.center && node.center.lat);
+            const lon = node.lon || node.lng || (node.center && node.center.lon);
+            if (!lat || !lon) return null;
+            return (
+              <Marker
+                key={node.id}
+                position={[lat, lon]}
+                icon={createCustomMarkerIcon("market")}
+              >
+                <Popup>
+                  <div style={{ padding: "4px 2px", minWidth: "180px" }}>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#2563eb", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                      <Truck size={12} />
+                      <span>{isHi ? "मंडी / गोदाम" : "Marketplace / Logistics"}</span>
+                    </div>
+                    <strong style={{ display: "block", color: "#0f172a", fontSize: "13px", marginTop: "2px" }}>
+                      {node.name}
+                    </strong>
+                    <div style={{ marginTop: "6px", fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
+                      📦 {node.distKm} km {isHi ? "दूरी" : "distance"}
+                    </div>
                   </div>
-                  <strong style={{ display: "block", color: "#0f172a", fontSize: "13px", marginTop: "2px" }}>
-                    {item.name}
-                  </strong>
-                  <div style={{ marginTop: "6px", fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
-                    📦 {item.distKm} km {isHi ? "दूरी" : "distance"}
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
+                </Popup>
+              </Marker>
+            );
+          })}
         </MapContainer>
       </div>
 
