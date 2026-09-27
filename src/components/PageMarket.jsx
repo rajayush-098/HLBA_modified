@@ -20,8 +20,8 @@ export default function PageMarket({ result, lang, formData, userCoords, onScanC
   const targetDistrict = (formData?.district || result?.district || "Meerut").trim();
   const targetState = (formData?.state || result?.state || "Uttar Pradesh").trim();
   const defaultCoords = getDistrictCoordinates(targetDistrict);
-  const userLat = userCoords?.lat ?? formData?.userLat ?? defaultCoords[0];
-  const userLng = userCoords?.lng ?? formData?.userLng ?? defaultCoords[1];
+  const userLat = userCoords?.lat || formData?.userLat || defaultCoords[0] || 26.8467;
+  const userLng = userCoords?.lng || formData?.userLng || defaultCoords[1] || 80.9462;
   const businessCategoryTag = getCategoryOsmTag(formData?.category || result?.category || "Dairy & Milk Products");
 
   return (

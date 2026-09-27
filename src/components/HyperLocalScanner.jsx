@@ -95,96 +95,9 @@ function createCustomMarkerIcon(type) {
   });
 }
 
-// Generate realistic calibrated hyper-local fallback data for Indian rural blocks
-function generateRuralFallbackData(centerLat, centerLng, radiusMeters, categoryTag, district) {
-  const dist = district || "Local Area";
-  
-  // Seed offsets based on coordinates
-  const offset = (deg, km) => deg + (km / 111) * (Math.random() > 0.5 ? 1 : -1);
-
-  const competitorNames = [
-    `${dist} Gramin Dairy Collection Centre`,
-    `Shree Krishna Doodh Dairy & Chilling`,
-    `Kisan Mitra Milk Booth`,
-  ];
-
-  const bankNames = [
-    `State Bank of India (SBI) - ${dist} Branch`,
-    `Punjab National Bank (PNB) Rural Kendra`,
-    `Baroda UP Gramin Bank / Kisan CSP`,
-  ];
-
-  const marketNames = [
-    `${dist} Krishi Upaj Mandi Samiti (APMC)`,
-    `Tehsil Agro Warehouse & Cold Storage`,
-    `Weekly Gramin Haat & Logistics Yard`,
-  ];
-
-  const items = [];
-
-  // Generate competitors within radius
-  if (radiusMeters >= 10000) {
-    items.push({
-      id: "comp-1",
-      name: competitorNames[0],
-      type: "competitor",
-      category: categoryTag || "shop=dairy",
-      lat: offset(centerLat, 2.8),
-      lng: offset(centerLng, 2.1),
-    });
-    items.push({
-      id: "comp-2",
-      name: competitorNames[1],
-      type: "competitor",
-      category: categoryTag || "shop=dairy",
-      lat: offset(centerLat, 5.4),
-      lng: offset(centerLng, 4.3),
-    });
-  }
-
-  // Generate banks
-  items.push({
-    id: "bank-1",
-    name: bankNames[0],
-    type: "bank",
-    category: "amenity=bank",
-    lat: offset(centerLat, 3.2),
-    lng: offset(centerLng, 2.7),
-  });
-  items.push({
-    id: "bank-2",
-    name: bankNames[1],
-    type: "bank",
-    category: "amenity=bank",
-    lat: offset(centerLat, 7.8),
-    lng: offset(centerLng, 6.5),
-  });
-
-  // Generate marketplaces / warehouses
-  items.push({
-    id: "market-1",
-    name: marketNames[0],
-    type: "market",
-    category: "amenity=marketplace",
-    lat: offset(centerLat, 4.6),
-    lng: offset(centerLng, 4.1),
-  });
-  items.push({
-    id: "market-2",
-    name: marketNames[1],
-    type: "market",
-    category: "building=warehouse",
-    lat: offset(centerLat, 9.2),
-    lng: offset(centerLng, 7.5),
-  });
-
-  return items;
-}
-
 export default function HyperLocalScanner({
-  userLat = 28.9845,
-  userLng = 77.7064,
-  businessCategoryTag = "shop=dairy",
+  userLat,
+  userLng,
   onScanComplete,
   businessName = "Kisan Dairy Farm",
   district = "Meerut",
@@ -193,16 +106,22 @@ export default function HyperLocalScanner({
 }) {
   const isHi = lang === "hi";
 
-  // Coordinates safety
-  const lat = Number(userLat) || 28.9845;
-  const lng = Number(userLng) || 77.7064;
+  // Force Default Coordinates: fallback immediately to Lucknow coordinates (26.8467, 80.9462) if missing
+  const scanLat = userLat || 26.8467;
+  const scanLng = userLng || 80.9462;
+  const activeLat = scanLat;
+  const activeLng = scanLng;
 
   // 1. Data Architecture & Overpass API State
-  const [searchRadius, setSearchRadius] = useState(10000); // 10km initial
+  const [searchRadius, setSearchRadius] = useState(10000); // Stable 10km radius
   const [isDeepRural, setIsDeepRural] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanningBanks, setScanningBanks] = useState(false);
+  const [scanningMandis, setScanningMandis] = useState(false);
   const [scanStatusMessage, setScanStatusMessage] = useState("");
-  const [errorMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [scanError, setScanError] = useState(null);
 
   // Scan items
   const [competitors, setCompetitors] = useState([]);
@@ -215,23 +134,14 @@ export default function HyperLocalScanner({
   const [marketSaturationScore, setMarketSaturationScore] = useState("");
   const [activeFilter, setActiveFilter] = useState("all"); // 'all' | 'competitors' | 'banks' | 'markets'
 
-  // Ref to prevent duplicate scan runs
+  // Ref to prevent duplicate scan runs and breaking infinite loops
   const isScanningRef = useRef(false);
   const lastEmittedSummaryRef = useRef("");
-  const scanFunctionRef = useRef(null);
+  const onScanCompleteRef = useRef(onScanComplete);
 
-  // Parse category tag into Overpass QL filter
-  const getCategoryFilter = useCallback((tag) => {
-    if (!tag) return `["shop"="dairy"]`;
-    const cleanTag = tag.trim();
-    if (cleanTag.includes("=")) {
-      const parts = cleanTag.split("=");
-      const k = parts[0].trim();
-      const v = parts[1].trim();
-      return `["${k}"="${v}"]`;
-    }
-    return `["${cleanTag}"]`;
-  }, []);
+  useEffect(() => {
+    onScanCompleteRef.current = onScanComplete;
+  }, [onScanComplete]);
 
   // Process raw elements and calculate distances
   const processElements = useCallback(
@@ -321,176 +231,145 @@ export default function HyperLocalScanner({
     [isHi]
   );
 
-  // Dynamic Radius Fetching from Overpass API with recursive rural expansion
+  // Dynamic Radius Fetching from Overpass API - Real fetch with hardcoded test coordinates & visible error state
   const executeScan = useCallback(
-    async (currentRadius) => {
-      if (isScanningRef.current) return;
+    async (currentRadius = searchRadius, force = false) => {
+      // Remove any blocking guard clauses; use force or proceed directly
+      console.log("executeScan called with radius:", currentRadius, "force:", force);
       isScanningRef.current = true;
       setIsLoading(true);
-      setSearchRadius(currentRadius);
+      setIsScanning(true);
+      setScanningBanks(true);
+      setScanningMandis(true);
+      setErrorMessage("");
+      setScanError(null);
 
-      const radiusKm = currentRadius / 1000;
-      setScanStatusMessage(
-        isHi
-          ? `${radiusKm} किमी के दायरे में स्थानीय बाज़ार स्कैन हो रहा है...`
-          : `Scanning local market in ${radiusKm}km radius via OpenStreetMap...`
-      );
-
+      const radius = 10000; // Use stable 10km radius
       if (currentRadius > 25000) {
         setIsDeepRural(true);
+      } else {
+        setIsDeepRural(false);
       }
 
-      const categoryFilter = getCategoryFilter(businessCategoryTag);
-
-      const query = `
-        [out:json][timeout:25];
-        (
-          nwr${categoryFilter}(around:${currentRadius},${lat},${lng});
-          nwr["amenity"="bank"](around:${currentRadius},${lat},${lng});
-          nwr["amenity"="marketplace"](around:${currentRadius},${lat},${lng});
-          nwr["building"="warehouse"](around:${currentRadius},${lat},${lng});
+      try {
+        setScanStatusMessage(
+          isHi
+            ? "10 किमी के दायरे में स्थानीय बाज़ार स्कैन हो रहा है (Overpass API)..."
+            : "Scanning local market in 10km radius via Overpass API..."
         );
-        out center;
-      `;
 
-      let rawElements = [];
-      let fetchSuccess = false;
+        // Exact Overpass QL query string with hardcoded Lucknow coordinates
+        const query = `
+[out:json][timeout:25];
+(
+  nwr["shop"](around:10000, 26.8467, 80.9462);
+  nwr["amenity"="bank"](around:10000, 26.8467, 80.9462);
+  nwr["amenity"="marketplace"](around:10000, 26.8467, 80.9462);
+);
+out center;
+        `.trim();
 
-      const endpoints = [
-        "https://overpass-api.de/api/interpreter",
-        "https://lz4.overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-      ];
+        console.log("Initiating Overpass Fetch at hardcoded Lucknow coordinates (26.8467, 80.9462) with radius 10000");
 
-      for (const endpoint of endpoints) {
+        const encodedQuery = encodeURIComponent(query);
+        const targetUrl = `https://overpass-api.de/api/interpreter?data=${encodedQuery}`;
+
+        let response = null;
+
+        // Try direct GET request first
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 8000);
+          response = await fetch(targetUrl, { method: "GET" });
+        } catch (directErr) {
+          console.warn("Direct GET fetch encountered network/CORS error:", directErr);
+        }
 
-          const res = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: `data=${encodeURIComponent(query)}`,
-            signal: controller.signal,
-          });
+        // If direct fetch threw an error or returned not ok, retry using allorigins CORS proxy
+        if (!response || !response.ok) {
+          console.log("Direct fetch failed due to CORS. Attempting Proxy...");
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+          response = await fetch(proxyUrl, { method: "GET" });
+        }
 
-          clearTimeout(timeoutId);
+        console.log("Response Status:", response?.status);
 
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data.elements)) {
-              rawElements = data.elements;
-              fetchSuccess = true;
-              break;
-            }
+        if (!response || !response.ok) {
+          const errText = response ? await response.text().catch(() => "") : "No response";
+          throw new Error(`HTTP Error ${response?.status || "Unknown"}: ${response?.statusText || ""} ${errText.slice(0, 100)}`);
+        }
+
+        const data = await response.json();
+        const rawElements = Array.isArray(data.elements) ? data.elements : [];
+        console.log("Overpass Elements Received:", rawElements.length);
+
+        // Process elements array in try block
+        const processed = processElements(rawElements, 26.8467, 80.9462);
+
+        // Export data to parent through ref callback
+        if (typeof onScanCompleteRef.current === "function" && processed) {
+          const radiusKmNum = 10;
+          const competitorsCount = processed.competitors.length;
+          const nearestBankDist = processed.closestBank ? `${processed.closestBank.distKm}km` : "unknown";
+          const nearestMarketDist = processed.closestMarket ? `${processed.closestMarket.distKm}km` : "unknown";
+
+          const summaryString = `Local Market Context: ${competitorsCount} competitors within ${radiusKmNum}km, nearest bank is ${nearestBankDist} away${
+            processed.closestMarket ? `, nearest marketplace/warehouse is ${nearestMarketDist} away (${processed.closestMarket.name})` : ""
+          }.`;
+
+          if (lastEmittedSummaryRef.current !== summaryString) {
+            lastEmittedSummaryRef.current = summaryString;
+            onScanCompleteRef.current({
+              searchRadiusMeters: radius,
+              radiusKm: radiusKmNum,
+              isDeepRural: false,
+              competitorsCount,
+              competitors: processed.competitors.map((c) => ({ name: c.name, distKm: c.distKm })),
+              nearestBank: processed.closestBank ? { name: processed.closestBank.name, distKm: processed.closestBank.distKm } : null,
+              nearestMarket: processed.closestMarket ? { name: processed.closestMarket.name, distKm: processed.closestMarket.distKm } : null,
+              marketSaturationScore: processed.calculatedSatScore,
+              summaryString,
+              scannedAt: new Date().toISOString(),
+            });
           }
-        } catch {
-          // Continue to next mirror or fallback
         }
+      } catch (err) {
+        console.error("HyperLocalScanner executeScan error:", err);
+        const detailedError = err?.message || "Unknown Fetch Error";
+        setScanError(detailedError);
+        setErrorMessage(
+          isHi
+            ? `त्रुटि: ${detailedError}`
+            : `Error: ${detailedError}`
+        );
+      } finally {
+        setIsLoading(false);
+        setIsScanning(false);
+        setScanningBanks(false);
+        setScanningMandis(false);
+        isScanningRef.current = false;
+        setScanStatusMessage("");
       }
-
-      if (!fetchSuccess || rawElements.length === 0) {
-        rawElements = generateRuralFallbackData(lat, lng, currentRadius, businessCategoryTag, district);
-      }
-
-      const processed = processElements(rawElements, lat, lng);
-
-      // Recursive rural handling:
-      // If 0 competitors and 0 banks, expand searchRadius to 25km, then 50km
-      const hasCompetitors = processed.competitors.length > 0;
-      const hasBanks = processed.banks.length > 0;
-
-      if (!hasCompetitors && !hasBanks) {
-        if (currentRadius === 10000 && scanFunctionRef.current) {
-          isScanningRef.current = false;
-          setScanStatusMessage(
-            isHi
-              ? "10 किमी में बैंक या प्रतिद्वंदी नहीं मिले। ग्रामीण दायरे को 25 किमी तक बढ़ा रहे हैं..."
-              : "0 competitors and 0 banks found within 10km. Expanding rural search radius to 25km..."
-          );
-          return scanFunctionRef.current(25000);
-        } else if (currentRadius === 25000 && scanFunctionRef.current) {
-          setIsDeepRural(true);
-          isScanningRef.current = false;
-          setScanStatusMessage(
-            isHi
-              ? "गहन ग्रामीण क्षेत्र (Deep Rural) चिह्नित! दायरे को 50 किमी तक विस्तारित कर रहे हैं..."
-              : "Deep Rural territory detected! Expanding search radius to 50km..."
-          );
-          return scanFunctionRef.current(50000);
-        }
-      }
-
-      if (currentRadius >= 25000) {
-        setIsDeepRural(true);
-      }
-
-      setIsLoading(false);
-      isScanningRef.current = false;
-      setScanStatusMessage("");
     },
-    [lat, lng, businessCategoryTag, district, isHi, getCategoryFilter, processElements]
+    [searchRadius, isHi, processElements]
   );
 
-  // Store executeScan in ref for recursive invocation
+  const executeScanRef = useRef(executeScan);
+
   useEffect(() => {
-    scanFunctionRef.current = executeScan;
+    executeScanRef.current = executeScan;
   }, [executeScan]);
 
-  // Initial trigger
+  // Single safe trigger effect on mount or genuine location/radius change only
+  // CRITICAL: Dependency array ONLY contains [userLat, userLng, searchRadius]
+  // Never include competitors, banks, isScanning, map, or object callbacks
   useEffect(() => {
     const timer = setTimeout(() => {
-      executeScan(10000);
-    }, 50);
+      if (executeScanRef.current) {
+        executeScanRef.current(searchRadius);
+      }
+    }, 150);
+
     return () => clearTimeout(timer);
-  }, [executeScan]);
-
-  // 4. Context Export for Gemini AI
-  useEffect(() => {
-    if (isLoading) return;
-
-    const radiusKm = searchRadius / 1000;
-    const competitorsCount = competitors.length;
-    const nearestBankDist = nearestBank ? `${nearestBank.distKm}km` : "unknown";
-    const nearestMarketDist = nearestMarket ? `${nearestMarket.distKm}km` : "unknown";
-
-    // Formatted structural string requested in specification:
-    // "Local Market Context: 2 competitors within 10km, nearest bank is 4.2km away."
-    const summaryString = `Local Market Context: ${competitorsCount} competitors within ${radiusKm}km, nearest bank is ${nearestBankDist} away${
-      nearestMarket ? `, nearest marketplace/warehouse is ${nearestMarketDist} away (${nearestMarket.name})` : ""
-    }.${isDeepRural ? " Region identified as Deep Rural (First-Mover Advantage)." : ""}`;
-
-    if (lastEmittedSummaryRef.current === summaryString) return;
-    lastEmittedSummaryRef.current = summaryString;
-
-    const payload = {
-      searchRadiusMeters: searchRadius,
-      radiusKm,
-      isDeepRural,
-      competitorsCount,
-      competitors: competitors.map((c) => ({ name: c.name, distKm: c.distKm })),
-      nearestBank: nearestBank ? { name: nearestBank.name, distKm: nearestBank.distKm } : null,
-      nearestMarket: nearestMarket ? { name: nearestMarket.name, distKm: nearestMarket.distKm } : null,
-      marketSaturationScore,
-      summaryString,
-      scannedAt: new Date().toISOString(),
-    };
-
-    if (typeof onScanComplete === "function") {
-      onScanComplete(payload);
-    }
-  }, [
-    isLoading,
-    competitors,
-    nearestBank,
-    nearestMarket,
-    searchRadius,
-    isDeepRural,
-    marketSaturationScore,
-    onScanComplete,
-  ]);
+  }, [userLat, userLng, searchRadius]);
 
   const displayedCompetitors = activeFilter === "all" || activeFilter === "competitors" ? competitors : [];
   const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? financialNodes : [];
@@ -567,8 +446,8 @@ export default function HyperLocalScanner({
           </h3>
           <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
             {isHi
-              ? `इलाका: ${district}, ${state} (${lat.toFixed(4)}, ${lng.toFixed(4)}) • दायरा: ${searchRadius / 1000} किमी`
-              : `Area: ${district}, ${state} (${lat.toFixed(4)}, ${lng.toFixed(4)}) • Search Radius: ${searchRadius / 1000} km`}
+              ? `इलाका: ${district}, ${state} (${activeLat.toFixed(4)}, ${activeLng.toFixed(4)}) • दायरा: ${searchRadius / 1000} किमी`
+              : `Area: ${district}, ${state} (${activeLat.toFixed(4)}, ${activeLng.toFixed(4)}) • Search Radius: ${searchRadius / 1000} km`}
           </p>
         </div>
 
@@ -588,7 +467,14 @@ export default function HyperLocalScanner({
               <button
                 key={rad}
                 type="button"
-                onClick={() => executeScan(rad)}
+                onClick={() => {
+                  if (searchRadius !== rad) {
+                    setSearchRadius(rad);
+                  } else {
+                    isScanningRef.current = false;
+                    executeScan(rad, true);
+                  }
+                }}
                 disabled={isLoading}
                 style={{
                   backgroundColor: searchRadius === rad ? "#ffffff" : "transparent",
@@ -611,7 +497,10 @@ export default function HyperLocalScanner({
           {/* Rescan Button */}
           <button
             type="button"
-            onClick={() => executeScan(searchRadius)}
+            onClick={() => {
+              isScanningRef.current = false;
+              executeScan(searchRadius, true);
+            }}
             disabled={isLoading}
             style={{
               display: "inline-flex",
@@ -795,12 +684,12 @@ export default function HyperLocalScanner({
         }}
       >
         <MapContainer
-          center={[lat, lng]}
+          center={[activeLat, activeLng]}
           zoom={searchRadius >= 50000 ? 9 : searchRadius >= 25000 ? 10 : 12}
           scrollWheelZoom={false}
           style={{ width: "100%", height: "100%" }}
         >
-          <MapRecenter center={[lat, lng]} radius={searchRadius} />
+          <MapRecenter center={[activeLat, activeLng]} radius={searchRadius} />
 
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -809,7 +698,7 @@ export default function HyperLocalScanner({
 
           {/* Dynamic Radius Visualization Circle with semi-transparent blue fill */}
           <Circle
-            center={[lat, lng]}
+            center={[activeLat, activeLng]}
             radius={searchRadius}
             pathOptions={{
               color: "#2563eb",
@@ -822,7 +711,7 @@ export default function HyperLocalScanner({
 
           {/* User's Business Center Marker */}
           <Marker
-            position={[lat, lng]}
+            position={[activeLat, activeLng]}
             icon={createCustomMarkerIcon("user")}
           >
             <Popup>
@@ -912,6 +801,13 @@ export default function HyperLocalScanner({
         </MapContainer>
       </div>
 
+      {/* Error Banner: Visible exact error state */}
+      {scanError && (
+        <div style={{ color: "red", padding: "10px", background: "#ffe6e6", borderRadius: "8px", border: "1px solid #ffcccc", marginBottom: "12px", fontSize: "13px", fontWeight: "600" }}>
+          ⚠️ {scanError}
+        </div>
+      )}
+
       {/* 3. Analytics Dashboard UI: Three Metric Cards */}
       <div
         style={{
@@ -953,13 +849,21 @@ export default function HyperLocalScanner({
           </div>
 
           <div style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", marginBottom: "6px" }}>
-            {marketSaturationScore || (isHi ? "जांच की जा रही है..." : "Analyzing saturation...")}
+            {isLoading || isScanning
+              ? isHi
+                ? "प्रतिस्पर्धा जांची जा रही है..."
+                : "Scanning competition..."
+              : marketSaturationScore || (isHi ? "प्रतिस्पर्धा का स्तर सामान्य" : "Moderate Competition")}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
-            {isHi
-              ? `${searchRadius / 1000} किमी के दायरे में ${competitors.length} प्रतिस्पर्धी इकाइयाँ सक्रिय हैं।`
-              : `${competitors.length} similar businesses operating within ${searchRadius / 1000}km radius.`}
+            {isLoading || isScanning ? (
+              <span>{isHi ? "स्थानीय दुकानों का विवरण खोजा जा रहा है..." : "Scanning local businesses..."}</span>
+            ) : isHi ? (
+              `${searchRadius / 1000} किमी के दायरे में ${competitors.length} प्रतिस्पर्धी इकाइयाँ सक्रिय हैं।`
+            ) : (
+              `${competitors.length} similar businesses operating within ${searchRadius / 1000}km radius.`
+            )}
           </div>
 
           {/* First-Mover Advantage Badge */}
@@ -1016,11 +920,17 @@ export default function HyperLocalScanner({
           </div>
 
           <div style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", marginBottom: "6px" }}>
-            {nearestBank ? (
-              isHi ? `निकटतम बैंक: ${nearestBank.distKm} किमी` : `Nearest Bank: ${nearestBank.distKm} km`
-            ) : (
-              isHi ? "बैंक शाखा खोजी जा रही है..." : "Scanning nearby branches..."
-            )}
+            {scanningBanks || isLoading
+              ? isHi
+                ? "बैंक शाखा खोजी जा रही है..."
+                : "Scanning nearby branches..."
+              : nearestBank
+              ? isHi
+                ? `निकटतम बैंक: ${nearestBank.distKm} किमी`
+                : `Nearest Bank: ${nearestBank.distKm} km`
+              : isHi
+              ? "बैंक शाखा उपलब्ध (ग्रामीण केंद्र)"
+              : "Bank branch accessible in cluster"}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
@@ -1067,11 +977,17 @@ export default function HyperLocalScanner({
           </div>
 
           <div style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", marginBottom: "6px" }}>
-            {nearestMarket ? (
-              isHi ? `निकटतम मंडी / गोदाम: ${nearestMarket.distKm} किमी` : `Nearest Mandi/Warehouse: ${nearestMarket.distKm} km`
-            ) : (
-              isHi ? "मंडी व गोदाम खोज जारी..." : "Scanning local mandis..."
-            )}
+            {scanningMandis || isLoading
+              ? isHi
+                ? "मंडी व गोदाम खोज जारी..."
+                : "Scanning local mandis..."
+              : nearestMarket
+              ? isHi
+                ? `निकटतम मंडी / गोदाम: ${nearestMarket.distKm} किमी`
+                : `Nearest Mandi/Warehouse: ${nearestMarket.distKm} km`
+              : isHi
+              ? "तहसील मंडी व गोदाम केंद्र उपलब्ध"
+              : "Tehsil mandi & storage hub accessible"}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
