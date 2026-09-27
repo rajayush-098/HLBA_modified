@@ -98,6 +98,8 @@ function createCustomMarkerIcon(type) {
 export default function HyperLocalScanner({
   userLat,
   userLng,
+  businessCategory = "dairy",
+  businessCategoryTag,
   onScanComplete,
   businessName = "Kisan Dairy Farm",
   district = "Meerut",
@@ -106,11 +108,9 @@ export default function HyperLocalScanner({
 }) {
   const isHi = lang === "hi";
 
-  // Force Default Coordinates: fallback immediately to Lucknow coordinates (26.8467, 80.9462) if missing
-  const scanLat = userLat || 26.8467;
-  const scanLng = userLng || 80.9462;
-  const activeLat = scanLat;
-  const activeLng = scanLng;
+  // Dynamic Coordinates: Pull strictly from props with Sardhana as safety fallback
+  const activeLat = userLat || 29.0719; // Keep Sardhana only as a final safety fallback
+  const activeLng = userLng || 77.7139;
 
   // 1. Data Architecture & Overpass API State
   const [searchRadius, setSearchRadius] = useState(10000); // Stable 10km radius
@@ -142,6 +142,19 @@ export default function HyperLocalScanner({
   useEffect(() => {
     onScanCompleteRef.current = onScanComplete;
   }, [onScanComplete]);
+
+  // Dynamic Category Filter Tag
+  const getCategoryFilter = useCallback((cat) => {
+    if (!cat) return '["shop"]';
+    const c = String(cat).toLowerCase();
+    if (c.includes("dairy") || c.includes("milk")) return '["shop"="dairy"]';
+    if (c.includes("kirana") || c.includes("grocery")) return '["shop"~"convenience|supermarket|general"]';
+    if (c.includes("tailor") || c.includes("cloth")) return '["shop"~"clothes|tailor"]';
+    if (c.includes("hardware") || c.includes("electrical")) return '["shop"~"hardware|electronics"]';
+    return '["shop"]'; // Fallback
+  }, []);
+
+  const categoryTag = getCategoryFilter(businessCategory || businessCategoryTag);
 
   // Process raw elements and calculate distances
   const processElements = useCallback(
@@ -190,9 +203,9 @@ export default function HyperLocalScanner({
         })
         .filter((m) => m.lat && m.lon);
 
-      // Filter for competitors (any shop or craft)
+      // Filter for competitors (any shop matching the category query)
       const foundShops = elements
-        .filter((el) => el.tags && (el.tags.shop || el.tags.craft))
+        .filter((el) => el.tags && el.tags.shop)
         .map((el, idx) => {
           const lat = el.lat ?? el.center?.lat;
           const lon = el.lon ?? el.center?.lon;
@@ -261,11 +274,10 @@ export default function HyperLocalScanner({
     [isHi]
   );
 
-  // Dynamic Radius Fetching from Overpass API - Real fetch with hardcoded test coordinates & visible error state
+  // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
   const executeScan = useCallback(
     async (currentRadius = searchRadius, force = false) => {
-      // Remove any blocking guard clauses; use force or proceed directly
-      console.log("executeScan called with radius:", currentRadius, "force:", force);
+      console.log("executeScan called with radius:", currentRadius, "force:", force, "coordinates:", activeLat, activeLng, "categoryTag:", categoryTag);
       isScanningRef.current = true;
       setIsLoading(true);
       setIsScanning(true);
@@ -274,32 +286,33 @@ export default function HyperLocalScanner({
       setErrorMessage("");
       setScanError(null);
 
-      const radius = 10000; // Use stable 10km radius
-      if (currentRadius > 25000) {
+      const radius = currentRadius || searchRadius || 10000;
+      if (radius > 25000) {
         setIsDeepRural(true);
       } else {
         setIsDeepRural(false);
       }
 
       try {
+        const radiusKm = radius / 1000;
         setScanStatusMessage(
           isHi
-            ? "10 किमी के दायरे में स्थानीय बाज़ार स्कैन हो रहा है (Overpass API)..."
-            : "Scanning local market in 10km radius via Overpass API..."
+            ? `${radiusKm} किमी के दायरे में स्थानीय बाज़ार स्कैन हो रहा है (Overpass API)...`
+            : `Scanning local market in ${radiusKm}km radius via Overpass API...`
         );
 
-        // Exact Overpass QL query string with hardcoded Lucknow coordinates
+        // Exact Overpass QL query string with dynamic category and dynamic coordinates
         const query = `
 [out:json][timeout:25];
 (
-  nwr["shop"](around:10000, 26.8467, 80.9462);
-  nwr["amenity"="bank"](around:10000, 26.8467, 80.9462);
-  nwr["amenity"="marketplace"](around:10000, 26.8467, 80.9462);
+  nwr${categoryTag}(around:${radius}, ${activeLat}, ${activeLng});
+  nwr["amenity"="bank"](around:${radius}, ${activeLat}, ${activeLng});
+  nwr["amenity"="marketplace"](around:${radius}, ${activeLat}, ${activeLng});
 );
 out center;
         `.trim();
 
-        console.log("Initiating Overpass Fetch at hardcoded Lucknow coordinates (26.8467, 80.9462) with radius 10000");
+        console.log(`Initiating Overpass Fetch at dynamic coordinates (${activeLat}, ${activeLng}) with radius ${radius} and tag ${categoryTag}`);
 
         const encodedQuery = encodeURIComponent(query);
         const targetUrl = `https://overpass-api.de/api/interpreter?data=${encodedQuery}`;
@@ -332,25 +345,25 @@ out center;
         console.log("Overpass Elements Received:", rawElements.length);
 
         // Process elements array in try block
-        const processed = processElements(rawElements, 26.8467, 80.9462);
+        const processed = processElements(rawElements, activeLat, activeLng);
 
         // Export data to parent through ref callback
         if (typeof onScanCompleteRef.current === "function" && processed) {
-          const radiusKmNum = 10;
+          const radiusKmNum = radius / 1000;
           const competitorsCount = processed.competitors.length;
           const nearestBankDist = processed.closestBank ? `${processed.closestBank.distKm}km` : "unknown";
           const nearestMarketDist = processed.closestMarket ? `${processed.closestMarket.distKm}km` : "unknown";
 
           const summaryString = `Local Market Context: ${competitorsCount} competitors within ${radiusKmNum}km, nearest bank is ${nearestBankDist} away${
             processed.closestMarket ? `, nearest marketplace/warehouse is ${nearestMarketDist} away (${processed.closestMarket.name})` : ""
-          }.`;
+          }.${radius >= 25000 ? " Region identified as Deep Rural (First-Mover Advantage)." : ""}`;
 
           if (lastEmittedSummaryRef.current !== summaryString) {
             lastEmittedSummaryRef.current = summaryString;
             onScanCompleteRef.current({
               searchRadiusMeters: radius,
               radiusKm: radiusKmNum,
-              isDeepRural: false,
+              isDeepRural: radius >= 25000,
               competitorsCount,
               competitors: processed.competitors.map((c) => ({ name: c.name, distKm: c.distKm })),
               nearestBank: processed.closestBank ? { name: processed.closestBank.name, distKm: processed.closestBank.distKm } : null,
@@ -379,7 +392,7 @@ out center;
         setScanStatusMessage("");
       }
     },
-    [searchRadius, isHi, processElements]
+    [searchRadius, isHi, activeLat, activeLng, categoryTag, processElements]
   );
 
   const executeScanRef = useRef(executeScan);
@@ -388,9 +401,7 @@ out center;
     executeScanRef.current = executeScan;
   }, [executeScan]);
 
-  // Single safe trigger effect on mount or genuine location/radius change only
-  // CRITICAL: Dependency array ONLY contains [userLat, userLng, searchRadius]
-  // Never include competitors, banks, isScanning, map, or object callbacks
+  // Auto-scan on Prop Change: Listens for changes to userLat, userLng, businessCategory, and searchRadius
   useEffect(() => {
     const timer = setTimeout(() => {
       if (executeScanRef.current) {
@@ -399,7 +410,7 @@ out center;
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [userLat, userLng, searchRadius]);
+  }, [userLat, userLng, businessCategory, searchRadius]);
 
   const displayedCompetitors = activeFilter === "all" || activeFilter === "competitors" ? competitors : [];
   const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? banks : [];
@@ -714,6 +725,7 @@ out center;
         }}
       >
         <MapContainer
+          key={`map-${activeLat}-${activeLng}`}
           center={[activeLat, activeLng]}
           zoom={searchRadius >= 50000 ? 9 : searchRadius >= 25000 ? 10 : 12}
           scrollWheelZoom={false}

@@ -48,6 +48,7 @@ export default function PageMarket({ result, lang, formData, userCoords, onScanC
       <HyperLocalScanner
         userLat={userLat}
         userLng={userLng}
+        businessCategory={formData?.category || result?.category || "Dairy & Milk Products"}
         businessCategoryTag={businessCategoryTag}
         onScanComplete={onScanComplete}
         businessName={formData?.business_name || result?.business || "Kisan Dairy Farm"}
