@@ -241,6 +241,18 @@ export default function HyperLocalScanner({
       setNearestBank(closestBank);
       setNearestMarket(closestMarket);
 
+      // Send live market intelligence to parent component
+      const callback = onScanComplete || onScanCompleteRef?.current;
+      if (typeof callback === "function") {
+        callback({
+          competitors: foundShops.length,
+          banks: foundBanks.length,
+          mandis: foundMandis.length,
+          nearestBankDist: closestBank?.distKm ?? null,
+          nearestMarketDist: closestMarket?.distKm ?? null
+        });
+      }
+
       const compCount = foundShops.length;
       let calculatedSatScore = isHi
         ? `अधिक कम्पटीशन - ${compCount} समान इकाइयाँ मिलीं`
@@ -275,6 +287,7 @@ export default function HyperLocalScanner({
   );
 
   // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
+  // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
   const executeScan = useCallback(
     async (currentRadius = searchRadius, force = false) => {
       console.log("executeScan called with radius:", currentRadius, "force:", force, "coordinates:", activeLat, activeLng, "categoryTag:", categoryTag);
@@ -303,7 +316,7 @@ export default function HyperLocalScanner({
 
         // Exact Overpass QL query string with dynamic category and dynamic coordinates
         const query = `
-[out:json][timeout:25];
+[out:json][timeout:60];
 (
   nwr${categoryTag}(around:${radius}, ${activeLat}, ${activeLng});
   nwr["amenity"="bank"](around:${radius}, ${activeLat}, ${activeLng});
@@ -312,33 +325,47 @@ export default function HyperLocalScanner({
 out center;
         `.trim();
 
-        console.log(`Initiating Overpass Fetch at dynamic coordinates (${activeLat}, ${activeLng}) with radius ${radius} and tag ${categoryTag}`);
-
         const encodedQuery = encodeURIComponent(query);
-        const targetUrl = `https://overpass-api.de/api/interpreter?data=${encodedQuery}`;
+        
+        // --- NEW MULTI-SERVER FALLBACK LOGIC (USING POST) ---
+        const endpoints = [
+          "https://lz4.overpass-api.de/api/interpreter",
+          "https://z.overpass-api.de/api/interpreter",
+          "https://overpass.kumi.systems/api/interpreter",
+          "https://overpass-api.de/api/interpreter"
+        ];
 
         let response = null;
+        let fetchSuccess = false;
 
-        // Try direct GET request first
-        try {
-          response = await fetch(targetUrl, { method: "GET" });
-        } catch (directErr) {
-          console.warn("Direct GET fetch encountered network/CORS error:", directErr);
+        for (const endpoint of endpoints) {
+          try {
+            console.log(`Trying Overpass mirror via POST: ${endpoint}`);
+            
+            // Switch to POST and send the query in the body instead of the URL
+            response = await fetch(endpoint, { 
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+              },
+              body: `data=${encodedQuery}`
+            });
+            
+            if (response.ok) {
+              fetchSuccess = true;
+              break; // Stop looping once we get a successful response
+            }
+          } catch (err) {
+            console.warn(`Mirror ${endpoint} failed. Trying next...`, err);
+          }
         }
 
-        // If direct fetch threw an error or returned not ok, retry using allorigins CORS proxy
-        if (!response || !response.ok) {
-          console.log("Direct fetch failed due to CORS. Attempting Proxy...");
-          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-          response = await fetch(proxyUrl, { method: "GET" });
+        if (!fetchSuccess || !response) {
+          throw new Error("All OpenStreetMap servers are currently busy or blocked by your browser. Please wait 30 seconds and click Rescan.");
         }
+        // --- END NEW LOGIC ---
 
         console.log("Response Status:", response?.status);
-
-        if (!response || !response.ok) {
-          const errText = response ? await response.text().catch(() => "") : "No response";
-          throw new Error(`HTTP Error ${response?.status || "Unknown"}: ${response?.statusText || ""} ${errText.slice(0, 100)}`);
-        }
 
         const data = await response.json();
         const rawElements = Array.isArray(data.elements) ? data.elements : [];

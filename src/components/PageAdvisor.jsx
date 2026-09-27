@@ -226,12 +226,24 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
       const bLoan = ctx.eligibleLoan ?? result?.scheme_analysis?.eligible_loan ?? 900000;
       const bEmi = ctx.monthlyEmi ?? result?.loan_affordability?.monthly_emi ?? 19462;
 
-      const localMarketStr =
-        ctx.localMarketContext ||
-        "Local Market Context: 2 competitors within 10km, nearest bank is 4.2km away.";
+      // 1. Safely extract live map data
+      const mData = ctx.localMarketData || {};
+      
+      const localMarketStr = ctx.localMarketData
+        ? `REAL-TIME MARKET DATA (10km radius): Exactly ${mData.competitors || 0} competitors, ${mData.banks || 0} banks, and ${mData.mandis || 0} mandis/warehouses.`
+        : "Local Market Context: Standard rural environment.";
 
-      const profileSummary = `Profile: ${bName}, ${bDistrict}, ${bState}\nMatched Scheme: ${bScheme}\nMargin: ₹${Number(bMargin).toLocaleString("en-IN")} | Loan: ₹${Number(bLoan).toLocaleString("en-IN")} | EMI: ₹${Number(bEmi).toLocaleString("en-IN")}\n${localMarketStr}`;
+      // 2. Build the AI system prompt
+      const profileSummary = `Profile: ${bName}, ${bDistrict}, ${bState}
+Matched Scheme: ${bScheme}
+Margin: ₹${Number(bMargin).toLocaleString("en-IN")} | Loan: ₹${Number(bLoan).toLocaleString("en-IN")} | EMI: ₹${Number(bEmi).toLocaleString("en-IN")}
 
+${localMarketStr}
+
+CRITICAL AI INSTRUCTION: 
+When advising the user, actively use the real-time market data. If they ask about strategy or risks, provide 3 highly specific ways to out-compete the ${mData.competitors || 0} existing competitors. If they ask about loans, mention approaching the ${mData.banks || 0} nearby banks for the ${bScheme}.`;
+
+      // 3. Package the payload for the backend
       const payload = {
         message: q,
         question: q,

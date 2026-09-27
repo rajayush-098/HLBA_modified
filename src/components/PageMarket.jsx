@@ -1,8 +1,24 @@
+import { useState, useEffect, useRef } from "react";
+import { Loader2, Sparkles } from "lucide-react";
 import HyperLocalScanner from "./HyperLocalScanner";
 import { getDistrictCoordinates, getCategoryOsmTag } from "../utils/geoUtils";
 
-export default function PageMarket({ result, lang, formData, userCoords, onScanComplete }) {
+export default function PageMarket({ 
+  result, 
+  lang = "hi", 
+  formData, 
+  userCoords, 
+  onScanComplete,
+  localMarketData // <-- Added this new prop
+}) {
   const isHi = lang === "hi";
+
+  // State to hold the dynamic AI-generated market advisory
+  const [liveAdvisory, setLiveAdvisory] = useState(
+    result?.market_summary || result?.feasibility_report || ""
+  );
+  const [isGeneratingAdvisory, setIsGeneratingAdvisory] = useState(false);
+  const lastScannedKeyRef = useRef("");
 
   const market = result.hyper_local_profile ?? {};
   const reach = market.market_reach ?? {};
@@ -23,6 +39,63 @@ export default function PageMarket({ result, lang, formData, userCoords, onScanC
   const userLat = userCoords?.lat || formData?.userLat || defaultCoords[0] || 26.8467;
   const userLng = userCoords?.lng || formData?.userLng || defaultCoords[1] || 80.9462;
   const businessCategoryTag = getCategoryOsmTag(formData?.category || result?.category || "Dairy & Milk Products");
+
+  // Automatically trigger AI advisory generation when scan results arrive
+  // Automatically trigger AI advisory generation when scan results arrive
+  useEffect(() => {
+    if (!localMarketData || localMarketData.competitors === undefined) return;
+
+    const scanKey = `${localMarketData.competitors}-${localMarketData.banks}-${localMarketData.mandis}`;
+    if (lastScannedKeyRef.current === scanKey) return;
+    lastScannedKeyRef.current = scanKey;
+
+    const generateLiveMarketAdvisory = async () => {
+      setIsGeneratingAdvisory(true);
+      try {
+        const categoryName = formData?.category || result?.category || "Dairy & Milk Products";
+        
+        // Extract exact number if an array was accidentally passed
+        const compCount = Array.isArray(localMarketData.competitors) ? localMarketData.competitors.length : localMarketData.competitors;
+        const bankCount = Array.isArray(localMarketData.banks) ? localMarketData.banks.length : localMarketData.banks;
+        const mandiCount = Array.isArray(localMarketData.mandis) ? localMarketData.mandis.length : localMarketData.mandis;
+
+        const promptQuery = isHi
+          ? `रियल-टाइम फील्ड डेटा (10 किमी दायरा): ${compCount} प्रतिद्वंदी, ${bankCount} बैंक, ${mandiCount} मंडी/वेयरहाउस। ${targetDistrict}, ${targetState} में ${categoryName} के व्यापार की व्यावहारिकता पर 3-4 वाक्यों का संक्षिप्त बाज़ार सारांश लिखें। 
+          CRITICAL: DO NOT use any Markdown formatting like *, #, or **. Write in plain text only.`
+          : `Real-time field data (10km radius): Exactly ${compCount} competitors, ${bankCount} banks, and${mandiCount} mandis/warehouses found. Provide a concise 3-4 sentence Local Market Feasibility Summary for starting a ${categoryName} in ${targetDistrict},${targetState}. 
+          CRITICAL: DO NOT use any Markdown formatting (no asterisks, no hashes, no bolding). Write in plain text paragraphs only.`;
+
+        const res = await fetch("/api/advisor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: promptQuery,
+            question: promptQuery,
+            language: lang,
+            selectedLanguage: isHi ? "Hindi" : "English",
+            businessContext: { businessType: categoryName, district: targetDistrict, state: targetState },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          let reply = (data?.reply || data?.answer || data?.text || "").trim();
+          // Safety net: Strip any markdown symbols that still slipped through
+          reply = reply.replace(/[*#_`]/g, ""); 
+          
+          if (reply) {
+            setLiveAdvisory(reply);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to generate live market advisory:", err);
+      } finally {
+        setIsGeneratingAdvisory(false);
+      }
+    };
+
+    generateLiveMarketAdvisory();
+  }, [localMarketData, targetDistrict, targetState, lang, isHi, formData, result]);
 
   return (
     <div className="side-page-content">
@@ -70,14 +143,21 @@ export default function PageMarket({ result, lang, formData, userCoords, onScanC
           </p>
         </div>
 
+        {/* UPDATED: Dynamic Competition Card handling arrays */}
         <div className="kpi-hero-card kpi-amber">
           <div className="kpi-top">
             <span className="kpi-tag">{isHi ? "प्रतिद्वंद्विता" : "Competition"}</span>
           </div>
           <p className="kpi-label">{isHi ? "प्रतिद्वंदी (Competition)" : "Existing Competition"}</p>
-          <h3 className="kpi-value">{competition}</h3>
+          <h3 className="kpi-value">
+            {localMarketData?.competitors !== undefined 
+              ? `${Array.isArray(localMarketData.competitors) ? localMarketData.competitors.length : localMarketData.competitors} ${isHi ? "दुकानें" : "Units"}` 
+              : competition}
+          </h3>
           <p className="kpi-hint">
-            {isHi ? "पहले से चल रही दुकानों व फर्मों की संख्या" : "Number of existing providers nearby"}
+            {localMarketData?.competitors !== undefined
+              ? (isHi ? "10 किमी के दायरे में पाई गई दुकानें" : "Units detected in 10 km radius")
+              : (isHi ? "पहले से चल रही दुकानों व फर्मों की संख्या" : "Number of existing providers nearby")}
           </p>
         </div>
 
@@ -190,20 +270,38 @@ export default function PageMarket({ result, lang, formData, userCoords, onScanC
         </div>
       </div>
 
-      {/* Local Market Summary */}
-      {(result.market_summary || result.feasibility_report) && (
-        <div style={{ marginTop: "24px", padding: "18px 20px", background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+      {/* Local Market Summary - Dynamic & Grounded */}
+      <div style={{ marginTop: "24px", padding: "18px 20px", background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: "#2563eb" }}></span>
             <h4 style={{ margin: 0, fontSize: "16px", fontWeight: "700", color: "#0f172a" }}>
-              {isHi ? "स्थानीय बाज़ार सलाह (Market Summary)" : "Local Market Advisory Summary"}
+              {isHi ? "स्थानीय बाज़ार सलाह (Market Advisory Summary)" : "Local Market Advisory Summary"}
             </h4>
           </div>
-          <div style={{ fontSize: "14px", lineHeight: "1.7", color: "#334155", background: "#f8fafc", padding: "14px 16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-            {result.market_summary || result.feasibility_report}
-          </div>
+          {localMarketData && (
+            <span style={{ fontSize: "11px", fontWeight: "600", padding: "2px 8px", backgroundColor: "#ecfdf5", color: "#059669", borderRadius: "12px", border: "1px solid #a7f3d0", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+              <Sparkles size={11} />
+              {isHi ? "लाइव डेटा आधारित" : "Live OSM Grounded"}
+            </span>
+          )}
         </div>
-      )}
+
+        <div style={{ fontSize: "14px", lineHeight: "1.7", color: "#334155", background: "#f8fafc", padding: "14px 16px", borderRadius: "8px", border: "1px solid #e2e8f0", minHeight: "60px" }}>
+          {isGeneratingAdvisory ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "#0284c7" }}>
+              <Loader2 size={16} className="spinning-icon" />
+              <span>
+                {isHi
+                  ? `फ़ील्ड डेटा (${localMarketData?.competitors || 0} प्रतिद्वंदी, ${localMarketData?.banks || 0} बैंक) के आधार पर सलाह तैयार हो रही है...`
+                  : `Generating advisory based on ${localMarketData?.competitors || 0} competitors and ${localMarketData?.banks || 0} banks...`}
+              </span>
+            </div>
+          ) : (
+            liveAdvisory || (isHi ? "स्कैन पूरा होने पर सलाह यहाँ प्रदर्शित होगी।" : "Advisory will display once scan finishes.")
+          )}
+        </div>
+      </div>
 
       {/* Local Recommendation advice */}
       <div className="village-tip-banner">
