@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import {
   Menu,
-  MoreVertical,
   MapPin,
   Crosshair,
   Loader2,
@@ -1507,30 +1506,15 @@ function App() {
         ) : (
           /* ================= BUSINESS ANALYSIS HUB WITH MANY SIDE PAGES ================= */
           <div className="analysis-hub-layout">
-            {/* Sleek Floating Quick-Access Toggle Button on screen edge */}
-            {!isSidebarOpen && (
-              <button
-                type="button"
-                className="floating-menu-toggle-btn no-print"
-                onClick={() => setIsSidebarOpen(true)}
-                aria-label="Open 11 Steps Menu"
-                title={lang === "hi" ? "11 चरण मेन्यू खोलें" : "Open 11 Steps Menu"}
-              >
-                <div className="floating-btn-inner">
-                  <MoreVertical size={16} />
-                  <span className="floating-btn-text">
-                    {lang === "hi" ? "11 चरण मेन्यू" : "11 Steps Menu"}
-                  </span>
-                  <span className="floating-btn-badge">
-                    {currentIndex + 1}/11
-                  </span>
-                </div>
-              </button>
-            )}
-
             {/* Top Navigation Bar inside Results View */}
             <div className="hub-top-strip no-print">
               <div className="hub-top-left">
+                <div className="hub-breadcrumbs">
+                  <span className="hub-tag">
+                    {result.business}
+                  </span>
+                </div>
+
                 <button
                   type="button"
                   className="hub-nav-toggle-btn"
@@ -1548,9 +1532,6 @@ function App() {
                 </button>
 
                 <div className="hub-breadcrumbs">
-                  <span className="hub-tag">
-                    {result.business}
-                  </span>
                   <span className="hub-crumb-sep">/</span>
                   <span className="hub-current-page">
                     {PAGES[currentIndex]?.title[lang] || PAGES[currentIndex]?.title.en}

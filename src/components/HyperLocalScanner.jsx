@@ -283,7 +283,7 @@ export default function HyperLocalScanner({
         calculatedSatScore,
       };
     },
-    [isHi]
+    [isHi, onScanComplete]
   );
 
   // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
