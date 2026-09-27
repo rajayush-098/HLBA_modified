@@ -29,9 +29,11 @@ import PageSwot from "./components/PageSwot";
 import PageRisk from "./components/PageRisk";
 import PageAdvisor from "./components/PageAdvisor";
 import PageReportCard from "./components/PageReportCard";
-import SmrityAssistant from "./components/SmrityAssistant";
+import SahyogiAssistant from "./components/SahyogiAssistant";
 // eslint-disable-next-line no-unused-vars
 import odopData from "./odopData.json";
+import { API_ROUTES } from "./apiRoutes";
+import blocksData from "./blocksData";
 
 const PAGES = [
   {
@@ -316,7 +318,7 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [blocksMap, setBlocksMap] = useState({});
+  const [blocksMap, setBlocksMap] = useState(() => blocksData || {});
   const [udyamLoading, setUdyamLoading] = useState(false);
   const [udyamStatus, setUdyamStatus] = useState(null);
 
@@ -337,12 +339,17 @@ function App() {
     setUdyamStatus(null);
     setError("");
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+
     try {
-      const res = await fetch("/api/verify-udyam", {
+      const res = await fetch(API_ROUTES.VERIFY_UDYAM, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ udyamNumber: formData.udyam_number.trim() }),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
 
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -407,6 +414,9 @@ function App() {
         // Save latitude and longitude to root application state
         setUserCoords({ lat, lng: lon });
 
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+
         try {
           const response = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`,
@@ -415,11 +425,13 @@ function App() {
                 "User-Agent": "VyapaarAI-Applet/1.0 (rural-business-advisor)",
                 "Accept-Language": "en,hi",
               },
+              signal: controller.signal,
             }
           );
+          clearTimeout(timer);
 
           if (!response.ok) {
-            throw new Error("Nominatim reverse geocoding failed");
+            throw new Error(`Nominatim reverse geocoding returned HTTP ${response.status}`);
           }
 
           const data = await response.json();
@@ -734,22 +746,22 @@ function App() {
   const getBusinessContext = () => {
     const projectCost =
       result?.scheme_analysis?.project_cost ||
-      (Number(formData.investment || 100000) / 0.1) || 1000000;
+      (formData.investment ? Number(formData.investment) / 0.1 : (result?.financial_analysis?.initial_investment ? result.financial_analysis.initial_investment / 0.1 : null));
     const promoterMargin =
       result?.scheme_analysis?.margin_capital ||
       result?.scheme_analysis?.beneficiary_contribution ||
-      Number(formData.investment || 100000);
+      (formData.investment ? Number(formData.investment) : (result?.financial_analysis?.initial_investment ?? null));
     const eligibleLoan =
-      result?.scheme_analysis?.eligible_loan ||
-      (projectCost * 0.9) || 900000;
+      result?.scheme_analysis?.eligible_loan ??
+      (projectCost != null && promoterMargin != null ? Math.max(0, projectCost - promoterMargin) : null);
     const matchedScheme =
       result?.scheme_analysis?.scheme_name ||
       result?.matched_scheme?.scheme_name ||
-      "PM FME";
+      null;
     const interestRate =
       result?.scheme_analysis?.interest_rate ||
       result?.loan_affordability?.interest_rate ||
-      "8.5%";
+      null;
 
     // 12-month projected margins
     const twelveMonthProjectedMargins =
@@ -761,13 +773,13 @@ function App() {
       })) || [];
 
     return {
-      // User inputs (exact keys requested)
-      businessType: formData.category || result?.category || "Dairy Farm",
-      district: formData.district || result?.district || "Meerut",
-      state: formData.state || result?.state || "UP",
-      totalInvestment: Number(formData.investment) || result?.financial_analysis?.initial_investment || 100000,
+      // User inputs
+      businessType: formData.category || result?.category || "",
+      district: formData.district || result?.district || "",
+      state: formData.state || result?.state || "",
+      totalInvestment: formData.investment ? Number(formData.investment) : (result?.financial_analysis?.initial_investment ?? null),
 
-      // Calculated metrics (exact keys requested)
+      // Calculated metrics
       promoterMargin,
       eligibleLoan,
       matchedScheme,
@@ -776,28 +788,30 @@ function App() {
       twelveMonthProjectedMargins,
 
       // Additional comprehensive metrics for deep advisor grounding
-      businessName: formData.business_name || result?.business || "Kisan Dairy Farm",
-      block: formData.block || result?.block || "Meerut",
+      businessName: formData.business_name || result?.business || "",
+      block: formData.block || result?.block || "",
       location: formData.location || result?.location || "",
-      experience: formData.experience || result?.experience || "Beginner",
+      experience: formData.experience || result?.experience || "",
       totalProjectCost: projectCost,
-      monthlyRevenue: result?.financial_analysis?.monthly_revenue || Number(formData.monthly_revenue || 60000),
-      monthlyExpenses: result?.financial_analysis?.monthly_expenses || Number(formData.monthly_expenses || 25000),
-      monthlyProfit: result?.financial_analysis?.monthly_profit || (Number(formData.monthly_revenue || 60000) - Number(formData.monthly_expenses || 25000)),
-      yearlyProfit: result?.financial_analysis?.yearly_profit || 420000,
-      monthlyEmi: result?.loan_affordability?.monthly_emi || 19462,
-      loanTenureMonths: result?.loan_affordability?.loan_tenure_months || 36,
-      moratoriumMonths: result?.loan_affordability?.moratorium_months || 3,
-      feasibility: result?.feasibilityVerdict || result?.feasibility || "Feasible",
-      localDemand: result?.hyper_local_profile?.local_demand || "Medium",
-      competitionLevel: result?.hyper_local_profile?.competition_level || "Medium",
-      riskLevel: result?.risk_analysis?.overall_risk_level || "Moderate Risk",
+      monthlyRevenue: result?.financial_analysis?.monthly_revenue ?? (formData.monthly_revenue ? Number(formData.monthly_revenue) : null),
+      monthlyExpenses: result?.financial_analysis?.monthly_expenses ?? (formData.monthly_expenses ? Number(formData.monthly_expenses) : null),
+      monthlyProfit: result?.financial_analysis?.monthly_profit ?? null,
+      yearlyProfit: result?.financial_analysis?.yearly_profit ?? null,
+      monthlyEmi: result?.loan_affordability?.monthly_emi ?? null,
+      loanTenureMonths: result?.loan_affordability?.loan_tenure_months ?? 36,
+      moratoriumMonths: result?.loan_affordability?.moratorium_months ?? 3,
+      feasibility: result?.feasibilityVerdict || result?.feasibility || "",
+      localDemand: result?.hyper_local_profile?.local_demand || "",
+      competitionLevel: result?.hyper_local_profile?.competition_level || "",
+      riskLevel: result?.risk_analysis?.overall_risk_level || "",
       marketReachSummary: result?.hyper_local_profile?.market_reach?.reach_type || "",
 
       // Hyper-local Market Context from OpenStreetMap scanner
       localMarketContext:
         localMarketData?.summaryString ||
-        "Local Market Context: 2 competitors within 10km, nearest bank is 4.2km away.",
+        (localMarketData?.status === "unavailable"
+          ? "Local Market Context: OpenStreetMap live field scan was unavailable. Field verification recommended."
+          : "Local Market Context: Live field scan data pending or not supplied."),
       localMarketData,
     };
   };
@@ -906,7 +920,10 @@ function App() {
         };
         const activeLanguage = languageNames[lang] || lang || "Hindi";
 
-        const apiRes = await fetch("/api/analyze", {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 25000);
+
+        const apiRes = await fetch(API_ROUTES.ANALYZE, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -925,7 +942,10 @@ function App() {
             language: lang,
             selectedLanguage: activeLanguage,
           }),
+          signal: controller.signal,
         });
+        clearTimeout(timer);
+
         if (apiRes.ok) {
           const apiData = await apiRes.json();
           finalOutput = { ...analysisOutput, ...apiData };
@@ -1717,7 +1737,7 @@ function App() {
       </main>
 
       {/* Floating SAHYOGI Assistant in Corner */}
-      <SmrityAssistant currentResult={result} lang={lang} />
+      <SahyogiAssistant currentResult={result} lang={lang} />
     </div>
   );
 }

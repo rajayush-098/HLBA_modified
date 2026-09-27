@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send,
   Bot,
@@ -11,9 +11,13 @@ import {
   RotateCcw,
   Building2,
   HelpCircle,
+  Mic,
+  MicOff,
+  AlertCircle,
 } from "lucide-react";
 import { getAdvisorAdvice } from "../advisorLogic";
 import { speakText, stopSpeaking } from "../utils/speech";
+import { API_ROUTES } from "../apiRoutes";
 
 const languageNames = {
   hi: "Hindi",
@@ -32,71 +36,77 @@ export default function PageAdvisor({ result, lang = "hi", formatCurrency, busin
 
   // Use businessContext fallback if not passed directly
   const ctx = businessContext || {
-    businessType: result?.category || "Dairy Farm",
-    businessName: result?.business || "Kisan Dairy Farm",
-    district: result?.district || "Meerut",
-    state: result?.state || "UP",
-    block: result?.block || "Meerut",
-    totalInvestment: result?.financial_analysis?.initial_investment || 1000000,
-    promoterMargin: result?.scheme_analysis?.margin_capital || 100000,
-    eligibleLoan: result?.scheme_analysis?.eligible_loan || 900000,
-    matchedScheme: result?.scheme_analysis?.scheme_name || "PM FME",
-    interestRate: result?.scheme_analysis?.interest_rate || "8.5%",
-    monthlyEmi: result?.loan_affordability?.monthly_emi || 19462,
-    totalProjectCost: result?.scheme_analysis?.project_cost || 1000000,
-    monthlyProfit: result?.financial_analysis?.monthly_profit || 45000,
+    businessType: result?.category || "",
+    businessName: result?.business || result?.business_name || (lang === "hi" ? "आपका व्यवसाय" : "Your Business"),
+    district: result?.district || (lang === "hi" ? "स्थानीय क्षेत्र" : "Local Area"),
+    state: result?.state || "",
+    block: result?.block || "",
+    totalInvestment: result?.financial_analysis?.initial_investment ?? null,
+    promoterMargin: result?.scheme_analysis?.margin_capital ?? result?.scheme_analysis?.beneficiary_contribution ?? null,
+    eligibleLoan: result?.scheme_analysis?.eligible_loan ?? null,
+    matchedScheme: result?.scheme_analysis?.scheme_name || (lang === "hi" ? "क्रेडिट लिंक्ड योजना" : "Credit Scheme"),
+    interestRate: result?.scheme_analysis?.interest_rate || null,
+    monthlyEmi: result?.loan_affordability?.monthly_emi ?? null,
+    totalProjectCost: result?.scheme_analysis?.project_cost ?? result?.financial_analysis?.initial_investment ?? null,
+    monthlyProfit: result?.financial_analysis?.monthly_profit ?? null,
     feasibility: result?.feasibilityVerdict || result?.feasibility || "Feasible",
   };
 
   const getInitialGreeting = () => {
-    const bName = ctx.businessName || "आपके व्यापार";
-    const bScheme = ctx.matchedScheme || "सरकारी योजना";
-    const bMargin = formatCurrency ? formatCurrency(ctx.promoterMargin) : ctx.promoterMargin?.toLocaleString("en-IN");
-    const bLoan = formatCurrency ? formatCurrency(ctx.eligibleLoan) : ctx.eligibleLoan?.toLocaleString("en-IN");
-    const bEmi = formatCurrency ? formatCurrency(ctx.monthlyEmi) : ctx.monthlyEmi?.toLocaleString("en-IN");
+    const bName = ctx.businessName || (lang === "hi" ? "आपके व्यापार" : "Your Business");
+    const bScheme = ctx.matchedScheme || (lang === "hi" ? "सरकारी योजना" : "Government Scheme");
+    const formatAmount = (val) => {
+      if (val == null) return lang === "hi" ? "अनिर्धारित" : "Pending";
+      return formatCurrency ? formatCurrency(val) : `₹${Number(val).toLocaleString("en-IN")}`;
+    };
+    const bMargin = formatAmount(ctx.promoterMargin);
+    const bLoan = formatAmount(ctx.eligibleLoan);
+    const bEmi = formatAmount(ctx.monthlyEmi);
+    const rateStr = ctx.interestRate ? `(@ ${ctx.interestRate})` : "";
+    const locationStr = [ctx.district, ctx.state].filter(Boolean).join(", ") || (lang === "hi" ? "स्थानीय क्षेत्र" : "your area");
 
     switch (lang) {
       case "en":
-        return `Hello! I am your AI Rural Business Advisor. I have loaded your complete business profile for **${bName}** (${ctx.businessType}) in ${ctx.district}, ${ctx.state}.
+        return `Hello! I am your AI Rural Business Advisor. I have loaded your complete business profile for **${bName}** (${ctx.businessType || "Enterprise"}) in ${locationStr}.
 • Matched Scheme: **${bScheme}**
-• Your Margin: **₹${bMargin}** | Bank Loan: **₹${bLoan}** (@ ${ctx.interestRate})
-• Estimated Monthly EMI: **₹${bEmi}**
+• Your Margin: **${bMargin}** | Bank Loan: **${bLoan}** ${rateStr}
+• Estimated Monthly EMI: **${bEmi}**
 How can I assist you with your equipment costs, scheme documents, market strategy, or profit margins?`;
       case "hinglish":
-        return `Namaste! Main aapka AI Business Advisor hoon. Maine **${bName}** (${ctx.businessType}) ka poora hisab check kar liya hai.
+        return `Namaste! Main aapka AI Business Advisor hoon. Maine **${bName}** (${ctx.businessType || "Enterprise"}) ka poora hisab check kar liya hai.
 • Matched Scheme: **${bScheme}**
-• Aapka Margin (Apna Paisa): **₹${bMargin}** | Bank Loan: **₹${bLoan}** (@ ${ctx.interestRate})
-• Har Mahine Ki EMI: **₹${bEmi}**
+• Aapka Margin (Apna Paisa): **${bMargin}** | Bank Loan: **${bLoan}** ${rateStr}
+• Har Mahine Ki EMI: **${bEmi}**
 Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke baare me koi bhi sawal poochh sakte hain!`;
       case "mr":
-        return `नमस्कार! मी तुमचा AI ग्रामीण व्यवसाय सल्लागार आहे. मी **${bName}** (${ctx.businessType}) चे संपूर्ण आकडे तपासले आहेत.
+        return `नमस्कार! मी तुमचा AI ग्रामीण व्यवसाय सल्लागार आहे. मी **${bName}** (${ctx.businessType || "व्यवसाय"}) चे संपूर्ण आकडे तपासले आहेत.
 • शिफारस केलेली योजना: **${bScheme}**
-• तुमचे भांडवल: **₹${bMargin}** | बँक कर्ज: **₹${bLoan}** (@ ${ctx.interestRate})
-• अंदाजे मासिक हप्ता (EMI): **₹${bEmi}**
+• तुमचे भांडवल: **${bMargin}** | बँक कर्ज: **${bLoan}** ${rateStr}
+• अंदाजे मासिक हप्ता (EMI): **${bEmi}**
 तुम्ही मला खर्च कसा कमी करावा, यंत्रसामग्री कशी घ्यावी किंवा विक्री कशी वाढवावी याविषयी विचारू शकता.`;
       case "bn":
-        return `নমস্কার! আমি আপনার AI গ্রামীণ ব্যবসা উপদেষ্টা। আমি **${bName}** (${ctx.businessType}) এর সমস্ত হিসাব পরীক্ষা করেছি।
+        return `নমস্কার! আমি আপনার AI গ্রামীণ ব্যবসা উপদেষ্টা। আমি **${bName}** (${ctx.businessType || "ব্যবসা"}) এর সমস্ত হিসাব পরীক্ষা করেছি।
 • নির্বাচিত প্রকল্প: **${bScheme}**
-• আপনার বিনিয়োগ: **₹${bMargin}** | ব্যাংক ঋণ: **₹${bLoan}** (@ ${ctx.interestRate})
-• আনুমানিক মাসিক কিস্তি (EMI): **₹${bEmi}**
+• আপনার বিনিয়োগ: **${bMargin}** | ব্যাংক ঋণ: **${bLoan}** ${rateStr}
+• আনুমানিক মাসিক কিস্তি (EMI): **${bEmi}**
 খরচ কমানো, সরঞ্জাম ক্রয় বা স্থানীয় বাজারে বিক্রি বাড়ানোর বিষয়ে যেকোনো প্রশ্ন করুন।`;
       case "te":
-        return `నమస్కారం! నేను మీ AI వ్యాపార సలహాదారుని. **${bName}** (${ctx.businessType}) పూర్తి వివరాలు పరిశీలించాను.
+        return `నమస్కారం! నేను మీ AI వ్యాపార సలహాదారుని. **${bName}** (${ctx.businessType || "వ్యాపారం"}) పూర్తి వివరాలు పరిశీలించాను.
 • సిఫార్సు చేసిన పథకం: **${bScheme}**
-• మీ పెట్టుబడి: **₹${bMargin}** | బ్యాంక్ రుణం: **₹${bLoan}** (@ ${ctx.interestRate})
-• నెలవారీ EMI: **₹${bEmi}**
+• మీ పెట్టుబడి: **${bMargin}** | బ్యాంక్ రుణం: **${bLoan}** ${rateStr}
+• నెలవారీ EMI: **${bEmi}**
 సెటప్ ఖర్చు తగ్గించడం, పరికరాల కొనుగోలు లేదా అమ్మకాలు పెంచడం గురించి నన్ను అడగండి.`;
       case "ta":
-        return `வணக்கம்! நான் உங்கள் AI கிராமப்புற வணிக ஆலோசகர். **${bName}** (${ctx.businessType}) இன் அனைத்து விவரங்களையும் ஆய்வு செய்துள்ளேன்.
+        return `வணக்கம்! நான் உங்கள் AI கிராமப்புற வணிக ஆலோசகர். **${bName}** (${ctx.businessType || "வணிகம்"}) இன் அனைத்து விவரங்களையும் ஆய்வு செய்துள்ளேன்.
 • தேர்ந்தெடுக்கப்பட்ட திட்டம்: **${bScheme}**
-• உங்கள் முதலீடு: **₹${bMargin}** | வங்கி கடன்: **₹${bLoan}** (@ ${ctx.interestRate})
-• மாதாந்திர EMI: **₹${bEmi}**
+• உங்கள் முதலீடு: **${bMargin}** | வங்கி கடன்: **${bLoan}** ${rateStr}
+• மாதாந்திர EMI: **${bEmi}**
 செலவைக் குறைப்பது, இயந்திரங்கள் வாங்குவது அல்லது விற்பனையை அதிகரிப்பது குறித்து ஏதேனும் கேள்விகளைக் கேளுங்கள்.`;
       default:
-        return `नमस्ते! मैं आपका AI ग्रामीण व्यापार सलाहकार हूँ। मैंने **${bName}** (${ctx.businessType}) के लिए आपके आंकड़े और सरकारी योजना का पूरा विश्लेषण तैयार किया है।
+        return `नमस्ते! मैं आपका AI ग्रामीण व्यापार सलाहकार हूँ। मैंने **${bName}** (${ctx.businessType || "व्यवसाय"}) के लिए आपके आंकड़े और सरकारी योजना का पूरा विश्लेषण तैयार किया है।
 • अनुशंसित सरकारी योजना: **${bScheme}**
-• आपका अंशदान (मार्जिन): **₹${bMargin}** | पात्र बैंक लोन: **₹${bLoan}** (@ ${ctx.interestRate})
-• अनुमानित मासिक किश्त (EMI): **₹${bEmi}**
+• आपका अंशदान (मार्जिन): **${bMargin}** | पात्र बैंक लोन: **${bLoan}** ${rateStr}
+• अनुमानित मासिक किश्त (EMI): **${bEmi}**
 आप मुझसे सेटअप लागत कम करने, मशीनरी बजट, बाज़ार की मांग या सरकारी सब्सिडी के नियम पर कोई भी सवाल पूछ सकते हैं।`;
     }
   };
@@ -115,6 +125,181 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
   const [speakingId, setSpeakingId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Speech Recognition State for Voice Input
+  const [isListening, setIsListening] = useState(false);
+  const [speechError, setSpeechError] = useState("");
+  const recognitionRef = useRef(null);
+  const baseTextRef = useRef("");
+  const isStartingRef = useRef(false);
+
+  // Safe detection of Web Speech API
+  const isSpeechSupported = typeof window !== "undefined" && Boolean(
+    window.SpeechRecognition || window.webkitSpeechRecognition
+  );
+
+  // Map application language to speech recognition locale
+  const getRecognitionLang = useCallback((currentLang) => {
+    switch (currentLang) {
+      case "en":
+        return "en-IN";
+      case "mr":
+        return "mr-IN";
+      case "bn":
+        return "bn-IN";
+      case "te":
+        return "te-IN";
+      case "ta":
+        return "ta-IN";
+      case "hi":
+      case "hinglish":
+      default:
+        return "hi-IN";
+    }
+  }, []);
+
+  // Clean up recognition session when component unmounts
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {
+          // Ignore abort errors on unmount
+        }
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore stop errors
+      }
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+    isStartingRef.current = false;
+  }, []);
+
+  const toggleListening = () => {
+    if (isListening || recognitionRef.current) {
+      stopListening();
+      return;
+    }
+
+    if (isStartingRef.current) return;
+    isStartingRef.current = true;
+
+    if (!isSpeechSupported) {
+      isStartingRef.current = false;
+      setSpeechError(
+        isHi
+          ? "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया टाइप करके सवाल पूछें।"
+          : "Voice input isn't supported in this browser. Please type your question instead."
+      );
+      return;
+    }
+
+    try {
+      const SpeechRecognitionClass =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognitionClass();
+      recognitionRef.current = recognition;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = getRecognitionLang(lang);
+      recognition.maxAlternatives = 1;
+
+      // Preserve any existing typed text before recognition starts
+      baseTextRef.current = inputQuestion;
+
+      recognition.onstart = () => {
+        isStartingRef.current = false;
+        setIsListening(true);
+        setSpeechError("");
+      };
+
+      recognition.onresult = (event) => {
+        let sessionFinal = "";
+        let sessionInterim = "";
+
+        for (let i = 0; i < event.results.length; ++i) {
+          const piece = event.results[i][0]?.transcript || "";
+          if (event.results[i].isFinal) {
+            sessionFinal += piece;
+          } else {
+            sessionInterim += piece;
+          }
+        }
+
+        const base = (baseTextRef.current || "").trim();
+        const spoken = (sessionFinal + sessionInterim).trim();
+
+        if (!spoken) return;
+
+        const combined = base ? `${base} ${spoken}` : spoken;
+        setInputQuestion(combined);
+        setErrorMsg("");
+        setSpeechError("");
+      };
+
+      recognition.onerror = (event) => {
+        isStartingRef.current = false;
+        setIsListening(false);
+        recognitionRef.current = null;
+
+        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          setSpeechError(
+            isHi
+              ? "माइक्रोफ़ोन अनुमति अस्वीकृत कर दी गई। कृपया माइक्रोफ़ोन की अनुमति दें या अपना सवाल टाइप करें।"
+              : "Microphone permission was denied. Please allow microphone access or type your question instead."
+          );
+        } else if (event.error === "no-speech") {
+          setSpeechError(
+            isHi
+              ? "कोई आवाज़ नहीं सुनी गई। कृपया पुनः प्रयास करें।"
+              : "No speech detected. Please try again."
+          );
+        } else if (event.error === "network") {
+          setSpeechError(
+            isHi
+              ? "वॉयस सेवा से संपर्क नहीं हो सका। कृपया अपना नेटवर्क जांचें या सवाल टाइप करें।"
+              : "Could not connect to speech service. Please check your connection or type your question."
+          );
+        } else if (event.error === "aborted") {
+          // Normal user abort, no error required
+        } else {
+          setSpeechError(
+            isHi
+              ? "वॉयस पहचान में समस्या आई। कृपया पुनः प्रयास करें या सवाल टाइप करें।"
+              : "Voice recognition error. Please try again or type your question."
+          );
+        }
+      };
+
+      recognition.onend = () => {
+        isStartingRef.current = false;
+        setIsListening(false);
+        recognitionRef.current = null;
+      };
+
+      recognition.start();
+    } catch (err) {
+      isStartingRef.current = false;
+      setIsListening(false);
+      recognitionRef.current = null;
+      console.warn("Speech recognition initialization error:", err);
+      setSpeechError(
+        isHi
+          ? "वॉयस पहचान शुरू नहीं हो सकी। कृपया अपना सवाल टाइप करें।"
+          : "Failed to start voice recognition. Please type your question."
+      );
+    }
+  };
 
   // Pre-suggested prompts matching user requirements exactly
   const suggestedPrompts = [
@@ -189,6 +374,7 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
   };
 
   const handleSend = async (queryText) => {
+    stopListening();
     const q = (queryText || inputQuestion).trim();
     if (!q) {
       setErrorMsg(isHi ? "कृपया अपना सवाल लिखें या नीचे से चुनें।" : "Please type a question or pick one from below.");
@@ -218,30 +404,35 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
 
     try {
       const activeLanguage = languageNames[lang] || lang || "Hindi";
-      const bName = ctx.businessName || result?.business || "Kisan Dairy Farm";
-      const bDistrict = ctx.district || result?.district || "Meerut";
-      const bState = ctx.state || result?.state || "UP";
-      const bScheme = ctx.matchedScheme || result?.scheme_analysis?.scheme_name || "PM FME";
-      const bMargin = ctx.promoterMargin ?? result?.scheme_analysis?.margin_capital ?? 100000;
-      const bLoan = ctx.eligibleLoan ?? result?.scheme_analysis?.eligible_loan ?? 900000;
-      const bEmi = ctx.monthlyEmi ?? result?.loan_affordability?.monthly_emi ?? 19462;
+      const bName = ctx.businessName || result?.business || (isHi ? "व्यवसाय" : "Enterprise");
+      const bDistrict = ctx.district || result?.district || (isHi ? "स्थानीय क्षेत्र" : "Local Area");
+      const bState = ctx.state || result?.state || "";
+      const bScheme = ctx.matchedScheme || result?.scheme_analysis?.scheme_name || (isHi ? "क्रेडिट योजना" : "Credit Scheme");
+      const bMargin = ctx.promoterMargin ?? result?.scheme_analysis?.margin_capital ?? null;
+      const bLoan = ctx.eligibleLoan ?? result?.scheme_analysis?.eligible_loan ?? null;
+      const bEmi = ctx.monthlyEmi ?? result?.loan_affordability?.monthly_emi ?? null;
 
       // 1. Safely extract live map data
       const mData = ctx.localMarketData || {};
+      const compCount = mData.competitors !== undefined && mData.competitors !== null
+        ? (Array.isArray(mData.competitors) ? mData.competitors.length : mData.competitors)
+        : null;
+      const bankCount = mData.banks !== undefined && mData.banks !== null ? mData.banks : null;
+      const mandiCount = mData.mandis !== undefined && mData.mandis !== null ? mData.mandis : null;
       
       const localMarketStr = ctx.localMarketData
-        ? `REAL-TIME MARKET DATA (10km radius): Exactly ${mData.competitors || 0} competitors, ${mData.banks || 0} banks, and ${mData.mandis || 0} mandis/warehouses.`
-        : "Local Market Context: Standard rural environment.";
+        ? `REAL-TIME MARKET DATA (10km radius): ${compCount !== null ? `${compCount} competitors detected` : "Competitor data pending/unavailable"}, ${bankCount !== null ? `${bankCount} banks nearby` : "Bank location scan pending"}${mandiCount !== null ? `, ${mandiCount} mandis/markets` : ""}.`
+        : "Local Market Context: Standard rural/semi-urban environment. Live map scan data pending.";
 
       // 2. Build the AI system prompt
-      const profileSummary = `Profile: ${bName}, ${bDistrict}, ${bState}
+      const profileSummary = `Profile: ${bName}, ${[bDistrict, bState].filter(Boolean).join(", ")}
 Matched Scheme: ${bScheme}
-Margin: ₹${Number(bMargin).toLocaleString("en-IN")} | Loan: ₹${Number(bLoan).toLocaleString("en-IN")} | EMI: ₹${Number(bEmi).toLocaleString("en-IN")}
+Margin: ${bMargin != null ? `₹${Number(bMargin).toLocaleString("en-IN")}` : "Not specified"} | Loan: ${bLoan != null ? `₹${Number(bLoan).toLocaleString("en-IN")}` : "Not specified"} | EMI: ${bEmi != null ? `₹${Number(bEmi).toLocaleString("en-IN")}` : "Not specified"}
 
 ${localMarketStr}
 
 CRITICAL AI INSTRUCTION: 
-When advising the user, actively use the real-time market data. If they ask about strategy or risks, provide 3 highly specific ways to out-compete the ${mData.competitors || 0} existing competitors. If they ask about loans, mention approaching the ${mData.banks || 0} nearby banks for the ${bScheme}.`;
+When advising the user, actively use the real-time market data. If they ask about strategy or risks, reference the verified field scan facts without inventing fabricated competitor shops. If they ask about loans, mention approaching the ${bankCount != null ? bankCount : "local"} nearby banks for the ${bScheme}.`;
 
       // 3. Package the payload for the backend
       const payload = {
@@ -263,15 +454,20 @@ When advising the user, actively use the real-time market data. If they ask abou
         selectedLanguage: activeLanguage,
       };
 
-      // Real Gemini API call to the backend proxy
-      const response = await fetch("/api/advisor", {
+      // Real Gemini API call to the backend proxy with timeout handling
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+
+      const response = await fetch(API_ROUTES.ADVISOR, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
 
       if (!response.ok) {
         throw new Error(`Server returned HTTP ${response.status}`);
@@ -298,12 +494,12 @@ When advising the user, actively use the real-time market data. If they ask abou
       try {
         const fallbackResp = getAdvisorAdvice({
           question: q,
-          business_name: ctx.businessName || "Kisan Dairy Farm",
-          category: ctx.businessType || "Dairy Farm",
+          business_name: ctx.businessName || (isHi ? "व्यवसाय" : "Business"),
+          category: ctx.businessType || (isHi ? "लघु उद्योग" : "Enterprise"),
           monthly_revenue: ctx.monthlyRevenue,
           monthly_expenses: ctx.monthlyExpenses,
           monthly_profit: ctx.monthlyProfit,
-          monthly_emi: ctx.monthlyEmi || 19462,
+          monthly_emi: ctx.monthlyEmi,
           roi_percentage: result?.financial_analysis?.roi_percentage,
           affordability_status: result?.loan_affordability?.affordability_status,
           local_demand: ctx.localDemand,
@@ -311,11 +507,12 @@ When advising the user, actively use the real-time market data. If they ask abou
           feasibility: ctx.feasibility,
         });
 
+        const locationLabel = [ctx.district, ctx.state].filter(Boolean).join(", ") || (isHi ? "स्थानीय क्षेत्र" : "Local Area");
         const fallbackAnswer =
           fallbackResp?.answer ||
           (isHi
-            ? `प्रोफाइल: ${ctx.businessName || "किसान डेयरी फार्म"}, ${ctx.district || "मेरठ"}, ${ctx.state || "उत्तर प्रदेश"}\nयोजना: ${ctx.matchedScheme || "PM FME"}\nमार्जिन: ₹${Number(ctx.promoterMargin || 100000).toLocaleString("en-IN")} | बैंक लोन: ₹${Number(ctx.eligibleLoan || 900000).toLocaleString("en-IN")} | EMI: ₹${Number(ctx.monthlyEmi || 19462).toLocaleString("en-IN")}\n\nव्यापार सलाह: अपने शुरुआती निवेश को सीमित रखने के लिए उपकरण चरणबद्ध तरीके से खरीदें। PM FME योजना के तहत 35% पूंजीगत सब्सिडी (अधिकतम ₹10 लाख) का लाभ उठाकर अपने कार्यशील पूंजी मार्जिन को सुरक्षित रखें।`
-            : `Profile: ${ctx.businessName || "Kisan Dairy Farm"}, ${ctx.district || "Meerut"}, ${ctx.state || "UP"}\nMatched Scheme: ${ctx.matchedScheme || "PM FME"}\nMargin: ₹${Number(ctx.promoterMargin || 100000).toLocaleString("en-IN")} | Loan: ₹${Number(ctx.eligibleLoan || 900000).toLocaleString("en-IN")} | EMI: ₹${Number(ctx.monthlyEmi || 19462).toLocaleString("en-IN")}\n\nBusiness Advice: Phase your machinery procurement to reduce upfront capital requirements, and leverage the 35% capital subsidy under the PM FME scheme to maintain positive cash flow.`);
+            ? `प्रोफाइल: ${ctx.businessName || "व्यवसाय"}, ${locationLabel}\nयोजना: ${ctx.matchedScheme || "सरकारी योजना"}\n${ctx.promoterMargin != null ? `मार्जिन: ₹${Number(ctx.promoterMargin).toLocaleString("en-IN")} | ` : ""}${ctx.eligibleLoan != null ? `बैंक लोन: ₹${Number(ctx.eligibleLoan).toLocaleString("en-IN")} | ` : ""}${ctx.monthlyEmi != null ? `EMI: ₹${Number(ctx.monthlyEmi).toLocaleString("en-IN")}` : ""}\n\nव्यापार सलाह: अपने शुरुआती निवेश को सीमित रखने के लिए उपकरण चरणबद्ध तरीके से खरीदें। क्रेडिट लिंक्ड सरकारी योजना के तहत मिलने वाली पूंजीगत सहायता से अपने कार्यशील पूंजी मार्जिन को सुरक्षित रखें।`
+            : `Profile: ${ctx.businessName || "Business"}, ${locationLabel}\nMatched Scheme: ${ctx.matchedScheme || "Credit Scheme"}\n${ctx.promoterMargin != null ? `Margin: ₹${Number(ctx.promoterMargin).toLocaleString("en-IN")} | ` : ""}${ctx.eligibleLoan != null ? `Loan: ₹${Number(ctx.eligibleLoan).toLocaleString("en-IN")} | ` : ""}${ctx.monthlyEmi != null ? `EMI: ₹${Number(ctx.monthlyEmi).toLocaleString("en-IN")}` : ""}\n\nBusiness Advice: Phase your machinery procurement to reduce upfront capital requirements, and leverage credit-linked capital assistance to maintain positive cash flow.`);
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -778,23 +975,26 @@ When advising the user, actively use the real-time market data. If they ask abou
         <div ref={chatBottomRef} />
       </div>
 
-      {/* Input Form Bar */}
+      {/* Input Form Bar - Styled with Light Warm Color Palette (#FFFBEB / #FCD34D) & Dark Text (#1F2937) */}
       <form
         onSubmit={handleSubmit}
+        className="advisor-query-form"
         style={{
           display: "flex",
           gap: "10px",
           alignItems: "flex-end",
-          backgroundColor: "#ffffff",
+          backgroundColor: "#FFFBEB",
           borderRadius: "12px",
-          padding: "10px",
-          border: "1.5px solid #cbd5e1",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+          padding: "10px 12px",
+          border: "1.5px solid #FCD34D",
+          boxShadow: "0 2px 8px rgba(217, 119, 6, 0.08)",
+          transition: "all 0.2s ease",
         }}
       >
         <textarea
           rows={2}
           value={inputQuestion}
+          className="advisor-query-textarea"
           onChange={(e) => {
             setInputQuestion(e.target.value);
             setErrorMsg("");
@@ -806,66 +1006,212 @@ When advising the user, actively use the real-time market data. If they ask abou
             }
           }}
           placeholder={
-            isHi
-              ? "यहाँ अपने व्यापार के बारे में कोई भी सवाल लिखें (जैसे: क्या मुझे मशीनरी के लिए अतिरिक्त लोन मिलेगा?)..."
-              : "Ask any question about your numbers (e.g., Can I lower my initial setup cost?)..."
+            isListening
+              ? isHi
+                ? "सुन रहे हैं... कृपया अपना सवाल बोलें..."
+                : "Listening... please speak your question..."
+              : isHi
+              ? "यहाँ अपने व्यापार के बारे में कोई भी सवाल लिखें या बोलें..."
+              : "Ask any question about your numbers (type or click microphone to speak)..."
           }
           disabled={loading}
           style={{
             flex: 1,
+            backgroundColor: "transparent",
             border: "none",
             outline: "none",
             resize: "none",
-            fontSize: "14px",
-            color: "#0f172a",
+            fontSize: "14.5px",
+            color: "#1F2937",
+            caretColor: "#1F2937",
             padding: "6px 8px",
             lineHeight: 1.5,
             fontFamily: "inherit",
           }}
         />
 
-        <button
-          type="submit"
-          onClick={(e) => {
-            if (!loading && inputQuestion.trim()) {
-              handleSubmit(e);
+        {/* Action Buttons: Voice Input Microphone + Send / Ask Button */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          {/* Microphone Voice Button */}
+          <button
+            type="button"
+            onClick={toggleListening}
+            disabled={loading || !isSpeechSupported}
+            aria-label={
+              isListening
+                ? isHi
+                  ? "आवाज़ सुनना बंद करें"
+                  : "Stop listening"
+                : isHi
+                ? "वॉयस से सवाल पूछें"
+                : "Ask the AI Business Advisor using voice"
             }
-          }}
-          disabled={loading || !inputQuestion.trim()}
+            title={
+              !isSpeechSupported
+                ? isHi
+                  ? "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया टाइप करके सवाल पूछें।"
+                  : "Voice input isn't supported in this browser. Please type your question instead."
+                : isListening
+                ? isHi
+                  ? "सुनना रोकें (Click to stop listening)"
+                  : "Click to stop listening"
+                : isHi
+                ? "बोलकर पूछें (Ask by voice)"
+                : "Ask by voice"
+            }
+            style={{
+              height: "44px",
+              padding: isListening ? "0 14px" : "0 12px",
+              borderRadius: "8px",
+              border: isListening
+                ? "1.5px solid #EF4444"
+                : !isSpeechSupported
+                ? "1.5px solid #E5E7EB"
+                : "1.5px solid #F59E0B",
+              backgroundColor: isListening
+                ? "#FEE2E2"
+                : !isSpeechSupported
+                ? "#F3F4F6"
+                : "#FEF3C7",
+              color: isListening
+                ? "#DC2626"
+                : !isSpeechSupported
+                ? "#9CA3AF"
+                : "#92400E",
+              cursor: loading || !isSpeechSupported ? "not-allowed" : "pointer",
+              fontWeight: 700,
+              fontSize: "13px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              transition: "all 0.15s ease",
+            }}
+          >
+            {isListening ? (
+              <>
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: "9px",
+                    height: "9px",
+                    borderRadius: "50%",
+                    backgroundColor: "#DC2626",
+                    animation: "pulse 1s infinite",
+                  }}
+                />
+                <MicOff size={16} />
+                <span>{isHi ? "सुन रहे हैं..." : "Listening..."}</span>
+              </>
+            ) : (
+              <>
+                <Mic size={17} style={{ opacity: isSpeechSupported ? 1 : 0.5 }} />
+                <span className="hidden sm:inline" style={{ fontSize: "12.5px" }}>
+                  {isHi ? "बोलकर पूछें" : "Ask by voice"}
+                </span>
+              </>
+            )}
+          </button>
+
+          {/* Submit / Ask Button */}
+          <button
+            type="submit"
+            onClick={(e) => {
+              if (!loading && inputQuestion.trim()) {
+                handleSubmit(e);
+              }
+            }}
+            disabled={loading || !inputQuestion.trim()}
+            style={{
+              backgroundColor: loading ? "#0284c7" : !inputQuestion.trim() ? "#94a3b8" : "#1e40af",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "8px",
+              padding: "10px 18px",
+              fontWeight: 700,
+              fontSize: "13.5px",
+              cursor: loading || !inputQuestion.trim() ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              flexShrink: 0,
+              transition: "all 0.15s ease",
+              height: "44px",
+            }}
+          >
+            {loading ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <span className="spinner-dots" style={{ display: "inline-flex", gap: "2px" }}>
+                  <span>●</span>
+                  <span>●</span>
+                  <span>●</span>
+                </span>
+                <span>Analyzing your numbers...</span>
+              </span>
+            ) : (
+              <>
+                <span>{isHi ? "पूछें" : "Ask"}</span>
+                <Send size={15} />
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+
+      {/* Active Listening Indicator Banner */}
+      {isListening && (
+        <div
           style={{
-            backgroundColor: loading ? "#0284c7" : !inputQuestion.trim() ? "#94a3b8" : "#1e40af",
-            color: "#ffffff",
-            border: "none",
+            marginTop: "8px",
+            padding: "8px 14px",
+            backgroundColor: "#FEF2F2",
+            border: "1px solid #FCA5A5",
             borderRadius: "8px",
-            padding: "10px 18px",
-            fontWeight: 700,
-            fontSize: "13.5px",
-            cursor: loading || !inputQuestion.trim() ? "not-allowed" : "pointer",
-            display: "inline-flex",
+            display: "flex",
             alignItems: "center",
-            gap: "6px",
-            flexShrink: 0,
-            transition: "all 0.15s ease",
-            height: "44px",
+            gap: "8px",
+            fontSize: "12.5px",
+            color: "#DC2626",
+            fontWeight: 600,
           }}
         >
-          {loading ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-              <span className="spinner-dots" style={{ display: "inline-flex", gap: "2px" }}>
-                <span>●</span>
-                <span>●</span>
-                <span>●</span>
-              </span>
-              <span>Analyzing your numbers...</span>
-            </span>
-          ) : (
-            <>
-              <span>{isHi ? "पूछें" : "Ask"}</span>
-              <Send size={15} />
-            </>
-          )}
-        </button>
-      </form>
+          <span
+            style={{
+              display: "inline-block",
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: "#DC2626",
+              animation: "pulse 1s infinite",
+            }}
+          />
+          <span>
+            {isHi
+              ? "🎙️ माइक्रोफ़ोन सक्रिय है... अपना सवाल बोलें (समाप्त होने पर 'सुन रहे हैं...' बटन दबाएँ, फिर 'पूछें' पर क्लिक करें)"
+              : "🎙️ Microphone active... Speak your question (Click 'Listening...' to finish speaking, review/edit, then press Ask)"}
+          </span>
+        </div>
+      )}
+
+      {/* Speech Recognition Error Banner */}
+      {speechError && (
+        <div
+          style={{
+            marginTop: "8px",
+            padding: "9px 14px",
+            backgroundColor: "#FEF2F2",
+            border: "1px solid #FECACA",
+            color: "#B91C1C",
+            borderRadius: "8px",
+            fontSize: "12.5px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}
+        >
+          <AlertCircle size={15} style={{ flexShrink: 0 }} />
+          <span>{speechError}</span>
+        </div>
+      )}
 
       {loading && (
         <div

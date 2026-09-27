@@ -125,14 +125,14 @@ export default function PageGovtLoan({ result, formatCurrency, lang, onJumpPage 
           </div>
           <p className="page-sub-desc" style={{ marginTop: "10px" }}>
             {isHi
-              ? "आपके द्वारा लगाए गए पैसों और व्यापार श्रेणी के आधार पर चुनी गई सबसे सटीक सरकारी योजना व बैंक सहायता।"
-              : "Best-fit government scheme and bank assistance tailored to your business category and capital contribution."}
+              ? "आपके द्वारा दर्ज निवेश और श्रेणी के आधार पर प्रारंभिक योजना स्क्रीनिंग। अंतिम स्वीकृति बैंक सत्यापन पर निर्भर है।"
+              : "Indicative scheme screening based on your self-reported capital and business category. Final sanction requires lender appraisal."}
           </p>
         </div>
 
         <div className="govt-emblem-badge">
           <div>
-            <strong>{matchedScheme.short_name || (isHi ? "मान्यता प्राप्त योजना" : "Verified Govt Scheme")}</strong>
+            <strong>{matchedScheme.short_name || (isHi ? "स्क्रीन की गई सरकारी योजना" : "Indicative Scheme Match")}</strong>
             {matchedTier && (
               <div
                 style={{
@@ -148,17 +148,44 @@ export default function PageGovtLoan({ result, formatCurrency, lang, onJumpPage 
                   letterSpacing: "0.3px",
                 }}
               >
-                {isHi ? `श्रेणी: ${matchedTier.name}` : `Matched Tier: ${matchedTier.name}`}
+                {isHi ? `संभावित श्रेणी: ${matchedTier.name}` : `Screened Tier: ${matchedTier.name}`}
               </div>
             )}
             <small>
               {matchedScheme.government_level
-                ? `${matchedScheme.government_level} Government`
+                ? `${matchedScheme.government_level} Government • Indicative Screening`
                 : isHi
-                ? "केंद्रीय सरकारी योजना"
-                : "Central Government Scheme"}
+                ? "केंद्रीय योजना • प्रारंभिक स्क्रीनिंग"
+                : "Central Scheme • Indicative Screening"}
             </small>
           </div>
+        </div>
+      </div>
+
+      {/* Official Verification Notice Callout */}
+      <div
+        style={{
+          marginTop: "16px",
+          marginBottom: "20px",
+          padding: "12px 16px",
+          backgroundColor: "#f0fdf4",
+          border: "1px solid #bbf7d0",
+          borderRadius: "8px",
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "10px",
+          fontSize: "13px",
+          color: "#166534",
+        }}
+      >
+        <span style={{ fontSize: "16px" }}>ℹ️</span>
+        <div>
+          <strong>{isHi ? "पात्रता स्क्रीनिंग सूचना: " : "Eligibility Screening Notice: "}</strong>
+          <span>
+            {isHi
+              ? "यह परिणाम आपकी दर्ज जानकारी के आधार पर एक प्रारंभिक स्क्रीनिंग है। सरकारी नियम व ब्याज दरें समय के साथ बदल सकती हैं। किसी भी योजना में आवेदन करने से पहले आधिकारिक सरकारी पोर्टल अथवा अपनी बैंक शाखा से पात्रता सत्यापित अवश्य करें।"
+              : "This result is an indicative screening based on the details you provided. Scheme rules, eligibility criteria, and interest rates are determined by financing institutions and nodal ministries. Always verify current criteria on the official government portal before applying."}
+          </span>
         </div>
       </div>
 
@@ -204,11 +231,11 @@ export default function PageGovtLoan({ result, formatCurrency, lang, onJumpPage 
 
         <div className="loan-breakdown-card card-green">
           <p className="breakdown-label">
-            {isHi ? "बैंक से मिलने योग्य लोन (Eligible Loan)" : "Eligible Bank Loan (Up to 90%)"}
+            {isHi ? "अनुमानित बैंक लोन सहायता" : "Indicative Loan Assistance (Up to 90%)"}
           </p>
           <h3 className="breakdown-value text-green">{formatCurrency(eligibleLoan)}</h3>
           <p className="breakdown-sub">
-            {isHi ? "बैंक या वित्तीय संस्थान द्वारा स्वीकृत राशि" : "Maximum loan granted by bank under scheme"}
+            {isHi ? "बैंक या वित्तीय संस्थान द्वारा अधिकतम संभावित राशि (सत्यापन अधीन)" : "Indicative loan ceiling under scheme (subject to lender appraisal)"}
           </p>
         </div>
 

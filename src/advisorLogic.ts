@@ -1,5 +1,23 @@
 import { getTehsilMarketReach } from '../locationData';
 import governmentSchemesData from './government_schemes.json';
+import {
+  routePsCoreScheme,
+  calculateProjectCostAndMaxLoan,
+  calculateEmi,
+  generateRepaymentSchedule,
+  calculateSih26091Financials,
+  PsCoreSchemeResult,
+  CentralFinancialResult,
+} from './financialRouter';
+
+export {
+  routePsCoreScheme,
+  calculateProjectCostAndMaxLoan,
+  calculateEmi,
+  generateRepaymentSchedule,
+  calculateSih26091Financials,
+};
+export type { PsCoreSchemeResult, CentralFinancialResult };
 
 export interface BusinessRequest {
   business_name: string;
@@ -411,206 +429,102 @@ export function analyzeBusiness(data: BusinessRequest) {
     financialRisk = 'Low';
   }
 
-  // 12-MONTH PROFIT PROJECTION
+  // STEP 5: CENTRAL SIH26091 FINANCIAL ROUTER & CORE SCHEME CALCULATION
+  const coreFinancials = calculateSih26091Financials(investment, monthlyRevenue, monthlyExpenses);
+
+  // Generic government schemes matching (retained as additional/supplementary info)
+  const matchedScheme = matchGovernmentScheme(data.category, investment);
+  const matchedAllSchemes = getAllMatchingSchemes(data.category, investment);
+
+  const marginCapital = coreFinancials.margin_capital;
+  const projectCost = coreFinancials.project_cost;
+  const maximumLoan = coreFinancials.maximum_loan;
+  const beneficiaryContribution = coreFinancials.beneficiary_contribution;
+  const eligibleLoan = coreFinancials.eligible_loan;
+  const schemeName = coreFinancials.scheme_name;
+  const interestRate = coreFinancials.interest_rate;
+  const repaymentPeriod = coreFinancials.repayment_period;
+  const loanTenureMonths = coreFinancials.loan_tenure_months;
+  const moratoriumMonths = coreFinancials.moratorium_months;
+  const repaymentMonths = coreFinancials.repayment_months;
+  const monthlyEmi = coreFinancials.monthly_emi;
+  const totalRepayment = coreFinancials.total_repayment;
+  const totalInterest = coreFinancials.total_interest;
+  const emiToIncomeRatio = coreFinancials.emi_to_income_ratio;
+  const affordabilityStatus = coreFinancials.affordability_status;
+  const affordabilityMessage = coreFinancials.affordability_message;
+  const repaymentSchedule = coreFinancials.repayment_schedule;
+  const quarterlyRepaymentSchedule = coreFinancials.quarterly_repayment_schedule;
+  const estimatedWorkingCapital = Math.max(monthlyExpenses, 0);
+  const monthlyOperationalCost = Math.max(monthlyExpenses, 0);
+  const schemeMessage = coreFinancials.message || `SIH26091 Scheme: ${schemeName}. Indicative screening subject to official bank appraisal.`;
+
+  // 12-MONTH PROFIT PROJECTION (Linked directly with central repayment schedule)
   const profitProjection = [];
   let cumulativeProfit = 0;
   for (let month = 1; month <= 12; month++) {
     cumulativeProfit += monthlyProfit;
+    const schedRow = repaymentSchedule[month - 1];
     profitProjection.push({
       month: `Month ${month}`,
       monthly_profit: Math.round(monthlyProfit * 100) / 100,
       cumulative_profit: Math.round(cumulativeProfit * 100) / 100,
+      emi: schedRow ? schedRow.emi : 0,
+      repayment_phase: schedRow ? schedRow.phase : 'N/A',
+      interest: schedRow ? schedRow.interest : 0,
+      principal: schedRow ? schedRow.principal : 0,
+      outstanding_principal: schedRow ? schedRow.outstanding_principal : 0,
     });
-  }
-
-  // STEP 5: GOVERNMENT LOAN SCHEME ANALYSIS (Dynamic matching using government_schemes.json)
-  const marginCapital = investment;
-  const projectCost = marginCapital / 0.1;
-  const maximumLoan = projectCost * 0.9;
-  const beneficiaryContribution = marginCapital;
-
-  const matchedScheme = matchGovernmentScheme(data.category, investment);
-  const matchedAllSchemes = getAllMatchingSchemes(data.category, investment);
-
-  let eligibleLoan = maximumLoan;
-  if (matchedScheme?.loan?.maximum_loan != null && matchedScheme.loan.maximum_loan > 0) {
-    eligibleLoan = Math.min(eligibleLoan, matchedScheme.loan.maximum_loan);
-  }
-
-  const schemeName = matchedScheme?.scheme_name || 'Pradhan Mantri MUDRA Yojana';
-  const schemeMessage = `Eligible for ${matchedScheme?.short_name || schemeName} (${matchedScheme?.category || 'Central Government Scheme'}).`;
-
-  // If the matched scheme contains a specific interest_rate (like 5% for PM Vishwakarma), use it. If null, fall back to a default of 9%.
-  const interestRate: number = matchedScheme?.loan?.interest_rate != null ? matchedScheme.loan.interest_rate : 9;
-  const repaymentPeriod: string = matchedScheme?.loan?.repayment || '5 years including 3-month moratorium';
-  const loanTenureMonths = 60;
-  const moratoriumMonths = 3;
-  let repaymentMonths: number | null = null;
-
-  // STEP 6: EMI + LOAN AFFORDABILITY + MORATORIUM
-  let monthlyEmi: number | null = null;
-  let totalRepayment: number | null = null;
-  let totalInterest: number | null = null;
-  let emiToIncomeRatio: number | null = null;
-
-  const repaymentSchedule: Array<{
-    month: number;
-    phase: string;
-    emi: number;
-    interest: number;
-    principal: number;
-    outstanding_principal: number;
-  }> = [];
-
-  const quarterlyRepaymentSchedule: Array<{
-    quarter: number;
-    months: string;
-    phase: string;
-    emi_total: number;
-    interest_total: number;
-    principal_total: number;
-    outstanding_principal: number;
-  }> = [];
-
-  const estimatedWorkingCapital = Math.max(monthlyExpenses, 0);
-  const monthlyOperationalCost = Math.max(monthlyExpenses, 0);
-
-  let affordabilityStatus = 'Not Available';
-  let affordabilityMessage = 'Loan affordability could not be calculated.';
-
-  if (eligibleLoan > 0 && interestRate !== null && loanTenureMonths !== null) {
-    repaymentMonths = loanTenureMonths - moratoriumMonths;
-    const monthlyInterestRate = interestRate / (12 * 100);
-
-    if (repaymentMonths > 0) {
-      let emi = 0;
-      if (monthlyInterestRate > 0) {
-        emi =
-          (eligibleLoan *
-            monthlyInterestRate *
-            Math.pow(1 + monthlyInterestRate, repaymentMonths)) /
-          (Math.pow(1 + monthlyInterestRate, repaymentMonths) - 1);
-      } else {
-        emi = eligibleLoan / repaymentMonths;
-      }
-
-      monthlyEmi = Math.round(emi * 100) / 100;
-      let outstandingPrincipal = Math.round(eligibleLoan * 100) / 100;
-      let totalRegularInterest = 0.0;
-      let totalMoratoriumInterest = 0.0;
-
-      for (let month = 1; month <= loanTenureMonths; month++) {
-        const monthlyInterest = Math.round(outstandingPrincipal * monthlyInterestRate * 100) / 100;
-
-        let principalPayment = 0.0;
-        let emiPayment = 0.0;
-
-        if (month <= moratoriumMonths) {
-          totalMoratoriumInterest += monthlyInterest;
-        } else {
-          emiPayment = monthlyEmi;
-          principalPayment = Math.round((emiPayment - monthlyInterest) * 100) / 100;
-
-          if (month === loanTenureMonths || principalPayment > outstandingPrincipal) {
-            principalPayment = Math.round(outstandingPrincipal * 100) / 100;
-            emiPayment = Math.round((principalPayment + monthlyInterest) * 100) / 100;
-          }
-
-          outstandingPrincipal = Math.round((outstandingPrincipal - principalPayment) * 100) / 100;
-          totalRegularInterest += monthlyInterest;
-        }
-
-        repaymentSchedule.push({
-          month,
-          phase: month <= moratoriumMonths ? 'Moratorium' : 'Repayment',
-          emi: Math.round(emiPayment * 100) / 100,
-          interest: Math.round(monthlyInterest * 100) / 100,
-          principal: Math.round(principalPayment * 100) / 100,
-          outstanding_principal: Math.round(outstandingPrincipal * 100) / 100,
-        });
-      }
-
-      totalInterest = Math.round((totalRegularInterest + totalMoratoriumInterest) * 100) / 100;
-      totalRepayment = Math.round((eligibleLoan + totalInterest) * 100) / 100;
-
-      for (let quarterStart = 1; quarterStart <= loanTenureMonths; quarterStart += 3) {
-        const quarterEnd = Math.min(quarterStart + 2, loanTenureMonths);
-        const quarterRows = repaymentSchedule.slice(quarterStart - 1, quarterEnd);
-
-        quarterlyRepaymentSchedule.push({
-          quarter: Math.floor((quarterStart - 1) / 3) + 1,
-          months: `${quarterStart}-${quarterEnd}`,
-          phase:
-            quarterEnd <= moratoriumMonths
-              ? 'Moratorium'
-              : quarterStart <= moratoriumMonths
-              ? 'Mixed'
-              : 'Repayment',
-          emi_total: Math.round(quarterRows.reduce((s, r) => s + r.emi, 0) * 100) / 100,
-          interest_total: Math.round(quarterRows.reduce((s, r) => s + r.interest, 0) * 100) / 100,
-          principal_total: Math.round(quarterRows.reduce((s, r) => s + r.principal, 0) * 100) / 100,
-          outstanding_principal: Math.round(quarterRows[quarterRows.length - 1].outstanding_principal * 100) / 100,
-        });
-      }
-
-      if (monthlyRevenue > 0) {
-        emiToIncomeRatio = Math.round(((monthlyEmi / monthlyRevenue) * 100) * 100) / 100;
-
-        if (monthlyProfit <= 0) {
-          affordabilityStatus = 'Not Affordable';
-          affordabilityMessage = 'Business has no positive monthly profit.';
-        } else if (monthlyEmi > monthlyCashSurplus) {
-          affordabilityStatus = 'Not Affordable';
-          affordabilityMessage = 'EMI is higher than monthly cash surplus.';
-        } else if (emiToIncomeRatio > 40) {
-          affordabilityStatus = 'High Repayment Burden';
-          affordabilityMessage = 'EMI creates a significant financial burden.';
-        } else if (emiToIncomeRatio > 25) {
-          affordabilityStatus = 'Moderately Affordable';
-          affordabilityMessage = 'Loan is possible but will put pressure on cash flow.';
-        } else {
-          affordabilityStatus = 'Affordable';
-          affordabilityMessage = 'EMI appears manageable based on current figures.';
-        }
-      }
-    }
   }
 
   // STEP 6.5: 5-TIER FINANCIAL CALCULATION & DEBT SERVICE COVERAGE RATIO (DSCR)
   const netMonthlyProfit = monthlyProfit;
   const effectiveMonthlyEmi = monthlyEmi && monthlyEmi > 0 ? monthlyEmi : 0;
-  // If monthlyEmi is 0, default to the highest tier (DSCR >= 2.0)
-  const dscr = effectiveMonthlyEmi === 0 ? 999 : netMonthlyProfit / effectiveMonthlyEmi;
-
+  let dscr = 0;
   let feasibilityVerdict = '';
   let colorTheme = 'green';
   let feasibilityDescription = '';
 
-  if (dscr >= 2.0) {
-    feasibilityVerdict = 'Exceptional & Highly Feasible';
-    colorTheme = 'green';
-    feasibilityDescription =
-      'Strong profit margins. The business generates more than double the required loan payment, making it highly secure.';
-  } else if (dscr >= 1.5) {
-    feasibilityVerdict = 'Feasible & Safe';
-    colorTheme = 'blue';
-    feasibilityDescription =
-      'Healthy profit buffer. You can comfortably cover the EMI and unexpected expenses while taking a personal income.';
-  } else if (dscr >= 1.15) {
-    feasibilityVerdict = 'Moderately Feasible / Needs Caution';
-    colorTheme = 'yellow';
-    feasibilityDescription =
-      'Profitable but lean. You can make loan payments, but must strictly control daily expenses to avoid cash flow issues.';
-  } else if (dscr >= 1.0) {
-    feasibilityVerdict = 'High Risk / Tight Margins';
-    colorTheme = 'orange';
-    feasibilityDescription =
-      'Barely breaking even. Almost all profit goes to the bank. High risk of loan default if sales drop even slightly.';
-  } else {
-    feasibilityVerdict = 'Unfeasible / Not Recommended';
+  if (coreFinancials.status === 'Not Eligible') {
+    dscr = 0;
+    feasibilityVerdict = 'Not Eligible / Exceeds Scheme Limit';
     colorTheme = 'red';
     feasibilityDescription =
-      'Mathematical loss. The projected profit cannot cover the monthly loan payment. Reassess your costs or loan amount.';
+      coreFinancials.message || 'Project cost is above ₹50 lakh. Check other financing options.';
+  } else if (coreFinancials.status === 'Invalid Input') {
+    dscr = 0;
+    feasibilityVerdict = 'Invalid Financial Input';
+    colorTheme = 'orange';
+    feasibilityDescription = 'Please provide valid positive investment figures.';
+  } else {
+    dscr = effectiveMonthlyEmi === 0 ? 999 : netMonthlyProfit / effectiveMonthlyEmi;
+
+    if (dscr >= 2.0) {
+      feasibilityVerdict = 'Exceptional & Highly Feasible';
+      colorTheme = 'green';
+      feasibilityDescription =
+        'Strong profit margins. The business generates more than double the required loan payment, making it highly secure.';
+    } else if (dscr >= 1.5) {
+      feasibilityVerdict = 'Feasible & Safe';
+      colorTheme = 'blue';
+      feasibilityDescription =
+        'Healthy profit buffer. You can comfortably cover the EMI and unexpected expenses while taking a personal income.';
+    } else if (dscr >= 1.15) {
+      feasibilityVerdict = 'Moderately Feasible / Needs Caution';
+      colorTheme = 'yellow';
+      feasibilityDescription =
+        'Profitable but lean. You can make loan payments, but must strictly control daily expenses to avoid cash flow issues.';
+    } else if (dscr >= 1.0) {
+      feasibilityVerdict = 'High Risk / Tight Margins';
+      colorTheme = 'orange';
+      feasibilityDescription =
+        'Barely breaking even. Almost all profit goes to the bank. High risk of loan default if sales drop even slightly.';
+    } else {
+      feasibilityVerdict = 'Unfeasible / Not Recommended';
+      colorTheme = 'red';
+      feasibilityDescription =
+        'Mathematical loss. The projected profit cannot cover the monthly loan payment. Reassess your costs or loan amount.';
+    }
   }
 
   const feasibility = feasibilityVerdict;
@@ -631,7 +545,10 @@ export function analyzeBusiness(data: BusinessRequest) {
     repayment_period: s.loan?.repayment || '3 to 7 years',
     moratorium_months: 3,
     match_score: s.scheme_id === matchedScheme?.scheme_id ? 98 : 85,
-    reason: `Aligned with ${data.category} enterprises and initial capital of ₹${investment.toLocaleString('en-IN')}.`,
+    reason: `Screened for ${data.category} enterprises with indicative capital of ₹${investment.toLocaleString('en-IN')}.`,
+    official_source_url: s.official_source?.url || "https://www.jansamarth.in/",
+    screening_stage: "Indicative Screening",
+    verification_required: true,
   }));
 
   const recommendedScheme = matchingSchemes.length > 0
@@ -640,6 +557,8 @@ export function analyzeBusiness(data: BusinessRequest) {
         scheme_name: schemeName,
         match_score: 95,
         reason: schemeMessage,
+        official_source_url: matchedScheme?.official_source?.url || "https://www.jansamarth.in/",
+        screening_stage: "Indicative Screening",
       };
 
   // HYPER-LOCAL MARKET ANALYSIS
@@ -1314,15 +1233,25 @@ export function analyzeBusiness(data: BusinessRequest) {
     recommendation,
     scheme_analysis: {
       scheme_name: schemeName,
+      status: coreFinancials.status,
       margin_capital: Math.round(marginCapital * 100) / 100,
       project_cost: Math.round(projectCost * 100) / 100,
       beneficiary_contribution: Math.round(beneficiaryContribution * 100) / 100,
       contribution_percentage: 10,
       maximum_loan: Math.round(maximumLoan * 100) / 100,
       eligible_loan: Math.round(eligibleLoan * 100) / 100,
+      maximum_scheme_loan: coreFinancials.maximum_scheme_loan,
       interest_rate: interestRate,
+      loan_tenure_months: loanTenureMonths,
       repayment_period: repaymentPeriod,
+      moratorium_months: moratoriumMonths,
+      rule_source: coreFinancials.rule_source,
       message: schemeMessage,
+      screening_status: coreFinancials.status === "Eligible" ? "SIH26091 Core Scheme Routed" : "Not Eligible",
+      verification_required: true,
+      verification_note: "Core financial routing based on SIH26091 scheme rules. Formal eligibility and loan sanction require appraisal by the financing institution.",
+      official_source_url: matchedScheme?.official_source?.url || "https://www.jansamarth.in/",
+      official_agency: matchedScheme?.official_source?.organization || matchedScheme?.ministry || "Government of India",
     },
     smart_scheme_matching: {
       matching_schemes: matchingSchemes,
@@ -1333,6 +1262,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       loan_tenure_months: loanTenureMonths,
       moratorium_months: moratoriumMonths,
       repayment_months: repaymentMonths,
+      interest_rate: interestRate,
       total_repayment: totalRepayment,
       total_interest: totalInterest,
       emi_to_income_ratio: emiToIncomeRatio,

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import HyperLocalScanner from "./HyperLocalScanner";
 import { getDistrictCoordinates, getCategoryOsmTag } from "../utils/geoUtils";
+import { API_ROUTES } from "../apiRoutes";
 
 export default function PageMarket({ 
   result, 
@@ -9,7 +10,7 @@ export default function PageMarket({
   formData, 
   userCoords, 
   onScanComplete,
-  localMarketData // <-- Added this new prop
+  localMarketData
 }) {
   const isHi = lang === "hi";
 
@@ -23,7 +24,6 @@ export default function PageMarket({
   const market = result.hyper_local_profile ?? {};
   const reach = market.market_reach ?? {};
   const demand = market.local_demand ?? "Moderate";
-  const competition = market.competition_level ?? "Moderate";
   const score = market.market_potential_score ?? 75;
   const suitability = market.location_suitability ?? "Suitable";
   const channels = reach.distribution_channels ?? [
@@ -32,40 +32,41 @@ export default function PageMarket({
     "Supply to Nearest Kasba / Tehsil Mandi",
   ];
 
-  // Resolve coordinates and OSM tag for HyperLocalScanner
-  const targetDistrict = (formData?.district || result?.district || "Meerut").trim();
-  const targetState = (formData?.state || result?.state || "Uttar Pradesh").trim();
-  const defaultCoords = getDistrictCoordinates(targetDistrict);
-  const userLat = userCoords?.lat || formData?.userLat || defaultCoords[0] || 26.8467;
-  const userLng = userCoords?.lng || formData?.userLng || defaultCoords[1] || 80.9462;
+  // Resolve coordinates and OSM tag dynamically without hardcoded Meerut defaults
+  const targetDistrict = (formData?.district || result?.district || "").trim();
+  const targetState = (formData?.state || result?.state || "").trim();
+  const defaultCoords = getDistrictCoordinates(targetDistrict, targetState);
+  const userLat = userCoords?.lat || formData?.userLat || (defaultCoords ? defaultCoords[0] : null);
+  const userLng = userCoords?.lng || formData?.userLng || (defaultCoords ? defaultCoords[1] : null);
   const businessCategoryTag = getCategoryOsmTag(formData?.category || result?.category || "Dairy & Milk Products");
 
   // Automatically trigger AI advisory generation when scan results arrive
-  // Automatically trigger AI advisory generation when scan results arrive
   useEffect(() => {
-    if (!localMarketData || localMarketData.competitors === undefined) return;
+    if (!localMarketData || localMarketData.status === "unavailable" || localMarketData.competitors === null || localMarketData.competitors === undefined) return;
 
-    const scanKey = `${localMarketData.competitors}-${localMarketData.banks}-${localMarketData.mandis}`;
+    const compCount = Array.isArray(localMarketData.competitors) ? localMarketData.competitors.length : localMarketData.competitors;
+    const bankCount = Array.isArray(localMarketData.banks) ? localMarketData.banks.length : (localMarketData.banks || 0);
+    const mandiCount = Array.isArray(localMarketData.mandis) ? localMarketData.mandis.length : (localMarketData.mandis || 0);
+
+    const scanKey = `${compCount}-${bankCount}-${mandiCount}-${targetDistrict}`;
     if (lastScannedKeyRef.current === scanKey) return;
     lastScannedKeyRef.current = scanKey;
 
     const generateLiveMarketAdvisory = async () => {
       setIsGeneratingAdvisory(true);
       try {
-        const categoryName = formData?.category || result?.category || "Dairy & Milk Products";
-        
-        // Extract exact number if an array was accidentally passed
-        const compCount = Array.isArray(localMarketData.competitors) ? localMarketData.competitors.length : localMarketData.competitors;
-        const bankCount = Array.isArray(localMarketData.banks) ? localMarketData.banks.length : localMarketData.banks;
-        const mandiCount = Array.isArray(localMarketData.mandis) ? localMarketData.mandis.length : localMarketData.mandis;
+        const categoryName = formData?.category || result?.category || "Rural Enterprise";
 
         const promptQuery = isHi
-          ? `रियल-टाइम फील्ड डेटा (10 किमी दायरा): ${compCount} प्रतिद्वंदी, ${bankCount} बैंक, ${mandiCount} मंडी/वेयरहाउस। ${targetDistrict}, ${targetState} में ${categoryName} के व्यापार की व्यावहारिकता पर 3-4 वाक्यों का संक्षिप्त बाज़ार सारांश लिखें। 
+          ? `रियल-टाइम फील्ड डेटा (10 किमी दायरा, OpenStreetMap): ${compCount} प्रतिद्वंदी, ${bankCount} बैंक, ${mandiCount} मंडी/वेयरहाउस। ${targetDistrict ? `${targetDistrict}, ` : ""}${targetState} में ${categoryName} के व्यापार की व्यावहारिकता पर 3-4 वाक्यों का संक्षिप्त बाज़ार सारांश लिखें। 
           CRITICAL: DO NOT use any Markdown formatting like *, #, or **. Write in plain text only.`
-          : `Real-time field data (10km radius): Exactly ${compCount} competitors, ${bankCount} banks, and${mandiCount} mandis/warehouses found. Provide a concise 3-4 sentence Local Market Feasibility Summary for starting a ${categoryName} in ${targetDistrict},${targetState}. 
+          : `Real-time field data (10km radius, OpenStreetMap): Exactly ${compCount} competitors, ${bankCount} banks, and ${mandiCount} mandis/warehouses found. Provide a concise 3-4 sentence Local Market Feasibility Summary for starting a ${categoryName} in ${targetDistrict ? `${targetDistrict}, ` : ""}${targetState}. 
           CRITICAL: DO NOT use any Markdown formatting (no asterisks, no hashes, no bolding). Write in plain text paragraphs only.`;
 
-        const res = await fetch("/api/advisor", {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+
+        const res = await fetch(API_ROUTES.ADVISOR, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -75,12 +76,13 @@ export default function PageMarket({
             selectedLanguage: isHi ? "Hindi" : "English",
             businessContext: { businessType: categoryName, district: targetDistrict, state: targetState },
           }),
+          signal: controller.signal,
         });
+        clearTimeout(timer);
 
         if (res.ok) {
           const data = await res.json();
           let reply = (data?.reply || data?.answer || data?.text || "").trim();
-          // Safety net: Strip any markdown symbols that still slipped through
           reply = reply.replace(/[*#_`]/g, ""); 
           
           if (reply) {
@@ -124,6 +126,7 @@ export default function PageMarket({
         businessCategory={formData?.category || result?.category || "Dairy & Milk Products"}
         businessCategoryTag={businessCategoryTag}
         onScanComplete={onScanComplete}
+        scannedData={localMarketData}
         businessName={formData?.business_name || result?.business || "Kisan Dairy Farm"}
         district={targetDistrict}
         state={targetState}
@@ -143,21 +146,29 @@ export default function PageMarket({
           </p>
         </div>
 
-        {/* UPDATED: Dynamic Competition Card handling arrays */}
+        {/* Dynamic Grounded Competition Card */}
         <div className="kpi-hero-card kpi-amber">
           <div className="kpi-top">
             <span className="kpi-tag">{isHi ? "प्रतिद्वंद्विता" : "Competition"}</span>
           </div>
           <p className="kpi-label">{isHi ? "प्रतिद्वंदी (Competition)" : "Existing Competition"}</p>
           <h3 className="kpi-value">
-            {localMarketData?.competitors !== undefined 
-              ? `${Array.isArray(localMarketData.competitors) ? localMarketData.competitors.length : localMarketData.competitors} ${isHi ? "दुकानें" : "Units"}` 
-              : competition}
+            {localMarketData?.status === "unavailable" || (localMarketData && localMarketData.competitors === null)
+              ? (isHi ? "डेटा अनुपलब्ध" : "Unavailable")
+              : localMarketData?.competitors !== undefined && localMarketData?.competitors !== null
+              ? (localMarketData.competitors === 0 || (Array.isArray(localMarketData.competitors) && localMarketData.competitors.length === 0)
+                  ? (isHi ? "0 प्रतिद्वंदी" : "0 Competitors")
+                  : `${Array.isArray(localMarketData.competitors) ? localMarketData.competitors.length : localMarketData.competitors} ${isHi ? "इकाइयाँ" : "Units"}`)
+              : (isHi ? "अभी स्कैन नहीं हुआ" : "Not scanned yet")}
           </h3>
           <p className="kpi-hint">
-            {localMarketData?.competitors !== undefined
-              ? (isHi ? "10 किमी के दायरे में पाई गई दुकानें" : "Units detected in 10 km radius")
-              : (isHi ? "पहले से चल रही दुकानों व फर्मों की संख्या" : "Number of existing providers nearby")}
+            {localMarketData?.status === "unavailable" || (localMarketData && localMarketData.competitors === null)
+              ? (isHi ? "मानचित्र सर्वर से फ़ील्ड डेटा प्राप्त नहीं हो सका" : "Field data could not be retrieved from map service")
+              : localMarketData?.competitors !== undefined && localMarketData?.competitors !== null
+              ? (localMarketData.competitors === 0 || (Array.isArray(localMarketData.competitors) && localMarketData.competitors.length === 0)
+                  ? (isHi ? "स्कैन पूरा हुआ — 10 किमी दायरे में कोई प्रतिद्वंदी नहीं (OpenStreetMap सत्यापित)" : "Scan completed — 0 competitors found in 10 km (OpenStreetMap verified)")
+                  : (isHi ? "10 किमी के दायरे में पाई गई दुकानें (OpenStreetMap)" : "Verified units detected in 10 km (OpenStreetMap)"))
+              : (isHi ? "वास्तविक गणना देखने के लिए नीचे 'Scan Area' पर क्लिक करें" : "Click 'Scan Area' below to analyze your local market")}
           </p>
         </div>
 

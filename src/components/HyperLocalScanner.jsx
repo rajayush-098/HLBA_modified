@@ -10,8 +10,11 @@ import {
   Sparkles,
   TrendingUp,
   Compass,
-  AlertCircle
+  AlertCircle,
+  Search,
 } from "lucide-react";
+
+import { getDistrictCoordinates } from "../utils/geoUtils";
 
 // Haversine formula to calculate straight-line distance in kilometers
 function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
@@ -101,38 +104,53 @@ export default function HyperLocalScanner({
   businessCategory = "dairy",
   businessCategoryTag,
   onScanComplete,
-  businessName = "Kisan Dairy Farm",
-  district = "Meerut",
-  state = "Uttar Pradesh",
+  scannedData,
+  businessName = "Proposed Enterprise",
+  district = "",
+  state = "",
   lang = "hi",
 }) {
   const isHi = lang === "hi";
 
-  // Dynamic Coordinates: Pull strictly from props with Sardhana as safety fallback
-  const activeLat = userLat || 29.0719; // Keep Sardhana only as a final safety fallback
-  const activeLng = userLng || 77.7139;
+  // Dynamic Coordinates: Pull from user GPS/props, or resolve district coordinates dynamically
+  const resolvedCoords = getDistrictCoordinates(district, state);
+  const activeLat = userLat != null ? Number(userLat) : (resolvedCoords ? resolvedCoords[0] : null);
+  const activeLng = userLng != null ? Number(userLng) : (resolvedCoords ? resolvedCoords[1] : null);
 
-  // 1. Data Architecture & Overpass API State
-  const [searchRadius, setSearchRadius] = useState(10000); // Stable 10km radius
-  const [isDeepRural, setIsDeepRural] = useState(false);
+  // 1. Data Architecture & Overpass API State - Initial state is Idle/Not Scanned unless prior session data exists
+  const initialHasScanned = Boolean(
+    scannedData &&
+    scannedData.scannedAt &&
+    (scannedData.status === "success" || scannedData.status === "unavailable")
+  );
+
+  const [hasScanned, setHasScanned] = useState(initialHasScanned);
+  const [searchRadius, setSearchRadius] = useState(scannedData?.searchRadiusMeters || 10000); // Stable 10km radius
+  const [isDeepRural, setIsDeepRural] = useState(Boolean(scannedData?.isDeepRural));
   const [isLoading, setIsLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanningBanks, setScanningBanks] = useState(false);
   const [scanningMandis, setScanningMandis] = useState(false);
   const [scanStatusMessage, setScanStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [scanError, setScanError] = useState(null);
+  const [scanError, setScanError] = useState(scannedData?.error || null);
 
   // Scan items
-  const [competitors, setCompetitors] = useState([]);
-  const [banks, setBanks] = useState([]);
-  const [mandis, setMandis] = useState([]);
+  const [competitors, setCompetitors] = useState(Array.isArray(scannedData?.competitors) ? scannedData.competitors : []);
+  const [banks, setBanks] = useState(Array.isArray(scannedData?.banks) ? scannedData.banks : []);
+  const [mandis, setMandis] = useState(Array.isArray(scannedData?.mandis) ? scannedData.mandis : []);
 
   // Metric summaries
-  const [nearestBank, setNearestBank] = useState(null);
-  const [nearestMarket, setNearestMarket] = useState(null);
-  const [marketSaturationScore, setMarketSaturationScore] = useState("");
+  const [nearestBank, setNearestBank] = useState(scannedData?.nearestBank || null);
+  const [nearestMarket, setNearestMarket] = useState(scannedData?.nearestMarket || null);
+  const [marketSaturationScore, setMarketSaturationScore] = useState(scannedData?.marketSaturationScore || "");
   const [activeFilter, setActiveFilter] = useState("all"); // 'all' | 'competitors' | 'banks' | 'markets'
+  const [scannedCenter, setScannedCenter] = useState(() => {
+    if (scannedData?.centerLat != null && scannedData?.centerLng != null) {
+      return [scannedData.centerLat, scannedData.centerLng];
+    }
+    return null;
+  });
 
   // Ref to prevent duplicate scan runs and breaking infinite loops
   const isScanningRef = useRef(false);
@@ -245,11 +263,15 @@ export default function HyperLocalScanner({
       const callback = onScanComplete || onScanCompleteRef?.current;
       if (typeof callback === "function") {
         callback({
+          status: "success",
           competitors: foundShops.length,
+          competitorsCount: foundShops.length,
           banks: foundBanks.length,
+          banksCount: foundBanks.length,
           mandis: foundMandis.length,
+          mandisCount: foundMandis.length,
           nearestBankDist: closestBank?.distKm ?? null,
-          nearestMarketDist: closestMarket?.distKm ?? null
+          nearestMarketDist: closestMarket?.distKm ?? null,
         });
       }
 
@@ -260,8 +282,8 @@ export default function HyperLocalScanner({
 
       if (compCount === 0) {
         calculatedSatScore = isHi
-          ? `शून्य कम्पटीशन - 10km दायरे में कोई समान दुकान नहीं`
-          : `No Competition - 0 similar shops found`;
+          ? "स्कैन पूरा — 0 प्रतिद्वंदी मिले"
+          : "Scan completed — 0 competitors found";
       } else if (compCount <= 5) {
         calculatedSatScore = isHi
           ? `कम कम्पटीशन - ${compCount} समान दुकानें मिलीं`
@@ -287,10 +309,26 @@ export default function HyperLocalScanner({
   );
 
   // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
-  // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
   const executeScan = useCallback(
-    async (currentRadius = searchRadius, force = false) => {
-      console.log("executeScan called with radius:", currentRadius, "force:", force, "coordinates:", activeLat, activeLng, "categoryTag:", categoryTag);
+    async (currentRadius, scanLat, scanLng) => {
+      const centerLat = scanLat != null ? scanLat : activeLat;
+      const centerLng = scanLng != null ? scanLng : activeLng;
+
+      if (centerLat == null || centerLng == null || isNaN(centerLat) || isNaN(centerLng)) {
+        setIsLoading(false);
+        setIsScanning(false);
+        setScanningBanks(false);
+        setScanningMandis(false);
+        isScanningRef.current = false;
+        const noCoordsMsg = isHi
+          ? "आपका स्थान निर्धारित करने में असमर्थ।\n\nस्कैन करने से पहले कृपया स्थान चुनें या दर्ज करें।"
+          : "Unable to determine your location.\n\nPlease select or enter a location before scanning.";
+        setErrorMessage(noCoordsMsg);
+        setScanStatusMessage("");
+        return;
+      }
+
+      console.log("Starting explicit scan at coordinates:", centerLat, centerLng, "radius:", currentRadius);
       isScanningRef.current = true;
       setIsLoading(true);
       setIsScanning(true);
@@ -300,34 +338,29 @@ export default function HyperLocalScanner({
       setScanError(null);
 
       const radius = currentRadius || searchRadius || 10000;
-      if (radius > 25000) {
-        setIsDeepRural(true);
-      } else {
-        setIsDeepRural(false);
-      }
+      setIsDeepRural(radius > 25000);
 
       try {
-        const radiusKm = radius / 1000;
         setScanStatusMessage(
           isHi
-            ? `${radiusKm} किमी के दायरे में स्थानीय बाज़ार स्कैन हो रहा है (Overpass API)...`
-            : `Scanning local market in ${radiusKm}km radius via Overpass API...`
+            ? "आपके स्थानीय इलाके को स्कैन किया जा रहा है..."
+            : "Scanning your local area..."
         );
 
         // Exact Overpass QL query string with dynamic category and dynamic coordinates
         const query = `
-[out:json][timeout:60];
+[out:json][timeout:30];
 (
-  nwr${categoryTag}(around:${radius}, ${activeLat}, ${activeLng});
-  nwr["amenity"="bank"](around:${radius}, ${activeLat}, ${activeLng});
-  nwr["amenity"="marketplace"](around:${radius}, ${activeLat}, ${activeLng});
+  nwr${categoryTag}(around:${radius}, ${centerLat}, ${centerLng});
+  nwr["amenity"="bank"](around:${radius}, ${centerLat}, ${centerLng});
+  nwr["amenity"="marketplace"](around:${radius}, ${centerLat}, ${centerLng});
 );
 out center;
         `.trim();
 
         const encodedQuery = encodeURIComponent(query);
         
-        // --- NEW MULTI-SERVER FALLBACK LOGIC (USING POST) ---
+        // Multi-server fallback logic using POST with strict timeout protection
         const endpoints = [
           "https://lz4.overpass-api.de/api/interpreter",
           "https://z.overpass-api.de/api/interpreter",
@@ -339,31 +372,33 @@ out center;
         let fetchSuccess = false;
 
         for (const endpoint of endpoints) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
           try {
             console.log(`Trying Overpass mirror via POST: ${endpoint}`);
-            
-            // Switch to POST and send the query in the body instead of the URL
             response = await fetch(endpoint, { 
               method: "POST",
               headers: {
                 "Content-Type": "application/x-www-form-urlencoded"
               },
-              body: `data=${encodedQuery}`
+              body: `data=${encodedQuery}`,
+              signal: controller.signal,
             });
+            clearTimeout(timeoutId);
             
-            if (response.ok) {
+            if (response && response.ok) {
               fetchSuccess = true;
-              break; // Stop looping once we get a successful response
+              break;
             }
           } catch (err) {
-            console.warn(`Mirror ${endpoint} failed. Trying next...`, err);
+            clearTimeout(timeoutId);
+            console.warn(`Mirror ${endpoint} attempt failed:`, err?.message || err);
           }
         }
 
         if (!fetchSuccess || !response) {
-          throw new Error("All OpenStreetMap servers are currently busy or blocked by your browser. Please wait 30 seconds and click Rescan.");
+          throw new Error("All OpenStreetMap Overpass servers are currently busy or unreachable. Please retry shortly.");
         }
-        // --- END NEW LOGIC ---
 
         console.log("Response Status:", response?.status);
 
@@ -372,7 +407,9 @@ out center;
         console.log("Overpass Elements Received:", rawElements.length);
 
         // Process elements array in try block
-        const processed = processElements(rawElements, activeLat, activeLng);
+        const processed = processElements(rawElements, centerLat, centerLng);
+        setHasScanned(true);
+        setScannedCenter([centerLat, centerLng]);
 
         // Export data to parent through ref callback
         if (typeof onScanCompleteRef.current === "function" && processed) {
@@ -381,18 +418,25 @@ out center;
           const nearestBankDist = processed.closestBank ? `${processed.closestBank.distKm}km` : "unknown";
           const nearestMarketDist = processed.closestMarket ? `${processed.closestMarket.distKm}km` : "unknown";
 
-          const summaryString = `Local Market Context: ${competitorsCount} competitors within ${radiusKmNum}km, nearest bank is ${nearestBankDist} away${
+          const summaryString = `Local Market Context (${radiusKmNum}km radius): ${competitorsCount} competitors, nearest bank is ${nearestBankDist} away${
             processed.closestMarket ? `, nearest marketplace/warehouse is ${nearestMarketDist} away (${processed.closestMarket.name})` : ""
           }.${radius >= 25000 ? " Region identified as Deep Rural (First-Mover Advantage)." : ""}`;
 
           if (lastEmittedSummaryRef.current !== summaryString) {
             lastEmittedSummaryRef.current = summaryString;
             onScanCompleteRef.current({
+              status: "success",
+              centerLat,
+              centerLng,
               searchRadiusMeters: radius,
               radiusKm: radiusKmNum,
               isDeepRural: radius >= 25000,
               competitorsCount,
-              competitors: processed.competitors.map((c) => ({ name: c.name, distKm: c.distKm })),
+              competitors: processed.competitors,
+              banksCount: processed.banks.length,
+              banks: processed.banks,
+              mandisCount: processed.mandis.length,
+              mandis: processed.mandis,
               nearestBank: processed.closestBank ? { name: processed.closestBank.name, distKm: processed.closestBank.distKm } : null,
               nearestMarket: processed.closestMarket ? { name: processed.closestMarket.name, distKm: processed.closestMarket.distKm } : null,
               marketSaturationScore: processed.calculatedSatScore,
@@ -403,13 +447,30 @@ out center;
         }
       } catch (err) {
         console.error("HyperLocalScanner executeScan error:", err);
-        const detailedError = err?.message || "Unknown Fetch Error";
+        const detailedError = err?.message || "Overpass API temporarily unavailable";
         setScanError(detailedError);
         setErrorMessage(
           isHi
-            ? `त्रुटि: ${detailedError}`
-            : `Error: ${detailedError}`
+            ? `मानचित्र सेवा से संपर्क नहीं हो सका: ${detailedError}`
+            : `Could not reach map service: ${detailedError}`
         );
+
+        if (typeof onScanCompleteRef.current === "function") {
+          onScanCompleteRef.current({
+            status: "unavailable",
+            error: detailedError,
+            competitors: null,
+            competitorsCount: null,
+            banks: null,
+            banksCount: null,
+            mandis: null,
+            mandisCount: null,
+            nearestBank: null,
+            nearestMarket: null,
+            summaryString: "Local market scan data is temporarily unavailable from OpenStreetMap.",
+            scannedAt: new Date().toISOString(),
+          });
+        }
       } finally {
         setIsLoading(false);
         setIsScanning(false);
@@ -422,23 +483,65 @@ out center;
     [searchRadius, isHi, activeLat, activeLng, categoryTag, processElements]
   );
 
-  const executeScanRef = useRef(executeScan);
+  // Explicit Scan handler: Single trigger for scanning, called exclusively by user clicking Scan
+  const handleScan = async (radiusOverride) => {
+    if (isLoading || isScanningRef.current) return;
+    setErrorMessage("");
+    setScanError(null);
 
-  useEffect(() => {
-    executeScanRef.current = executeScan;
-  }, [executeScan]);
+    // 1. Obtain and validate usable location
+    let targetLat = userLat != null ? Number(userLat) : null;
+    let targetLng = userLng != null ? Number(userLng) : null;
 
-  // Auto-scan on Prop Change: Listens for changes to userLat, userLng, businessCategory, and searchRadius
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (executeScanRef.current) {
-        executeScanRef.current(searchRadius);
+    if (targetLat == null || targetLng == null || isNaN(targetLat) || isNaN(targetLng)) {
+      const dynamicCoords = getDistrictCoordinates(district, state);
+      if (dynamicCoords && dynamicCoords[0] != null && dynamicCoords[1] != null) {
+        targetLat = dynamicCoords[0];
+        targetLng = dynamicCoords[1];
       }
-    }, 150);
+    }
 
-    return () => clearTimeout(timer);
-  }, [userLat, userLng, businessCategory, searchRadius]);
+    // If coordinates still not determined, prompt browser GPS if available
+    if (targetLat == null || targetLng == null || isNaN(targetLat) || isNaN(targetLng)) {
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
+        setIsLoading(true);
+        setScanStatusMessage(isHi ? "स्थान का पता लगाया जा रहा है..." : "Detecting your location...");
+        try {
+          const pos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              timeout: 10000,
+              enableHighAccuracy: true,
+            });
+          });
+          if (pos && pos.coords) {
+            targetLat = pos.coords.latitude;
+            targetLng = pos.coords.longitude;
+          }
+        } catch (geoErr) {
+          console.warn("Geolocation prompt or lookup failed:", geoErr);
+        } finally {
+          setIsLoading(false);
+          setScanStatusMessage("");
+        }
+      }
+    }
 
+    // If location is still unavailable, do NOT send arbitrary default
+    if (targetLat == null || targetLng == null || isNaN(targetLat) || isNaN(targetLng)) {
+      const noLocationMsg = isHi
+        ? "आपका स्थान निर्धारित करने में असमर्थ।\n\nस्कैन करने से पहले कृपया स्थान चुनें या दर्ज करें।"
+        : "Unable to determine your location.\n\nPlease select or enter a location before scanning.";
+      setErrorMessage(noLocationMsg);
+      setScanStatusMessage("");
+      return;
+    }
+
+    // 2. Perform the scan with validated location
+    const rad = radiusOverride || searchRadius || 10000;
+    await executeScan(rad, targetLat, targetLng);
+  };
+
+  const mapCenter = scannedCenter || (activeLat != null && activeLng != null ? [activeLat, activeLng] : null);
   const displayedCompetitors = activeFilter === "all" || activeFilter === "competitors" ? competitors : [];
   const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? banks : [];
   const displayedMarkets = activeFilter === "all" || activeFilter === "markets" ? mandis : [];
@@ -514,8 +617,8 @@ out center;
           </h3>
           <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
             {isHi
-              ? `इलाका: ${district}, ${state} (${activeLat.toFixed(4)}, ${activeLng.toFixed(4)}) • दायरा: ${searchRadius / 1000} किमी`
-              : `Area: ${district}, ${state} (${activeLat.toFixed(4)}, ${activeLng.toFixed(4)}) • Search Radius: ${searchRadius / 1000} km`}
+              ? `इलाका: ${district || "अनिर्धारित"}, ${state || "भारत"}${activeLat != null && activeLng != null ? ` (${activeLat.toFixed(4)}, ${activeLng.toFixed(4)})` : ""} • दायरा: ${searchRadius / 1000} किमी`
+              : `Area: ${district || "Unspecified"}, ${state || "India"}${activeLat != null && activeLng != null ? ` (${activeLat.toFixed(4)}, ${activeLng.toFixed(4)})` : ""} • Search Radius: ${searchRadius / 1000} km`}
           </p>
         </div>
 
@@ -536,12 +639,7 @@ out center;
                 key={rad}
                 type="button"
                 onClick={() => {
-                  if (searchRadius !== rad) {
-                    setSearchRadius(rad);
-                  } else {
-                    isScanningRef.current = false;
-                    executeScan(rad, true);
-                  }
+                  setSearchRadius(rad);
                 }}
                 disabled={isLoading}
                 style={{
@@ -562,74 +660,149 @@ out center;
             ))}
           </div>
 
-          {/* Rescan Button */}
+          {/* Explicit Trigger: Scan Area / Scanning... / Scan Again Button */}
           <button
             type="button"
-            onClick={() => {
-              isScanningRef.current = false;
-              executeScan(searchRadius, true);
-            }}
+            onClick={() => handleScan()}
             disabled={isLoading}
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: "6px",
-              backgroundColor: isLoading ? "#94a3b8" : "#1e40af",
+              gap: "7px",
+              backgroundColor: isLoading ? "#94a3b8" : hasScanned ? "#059669" : "#2563eb",
               color: "#ffffff",
               border: "none",
               borderRadius: "8px",
-              padding: "7px 14px",
+              padding: "7px 16px",
               fontSize: "12.5px",
               fontWeight: 700,
               cursor: isLoading ? "not-allowed" : "pointer",
+              boxShadow: isLoading ? "none" : hasScanned ? "0 2px 6px rgba(5, 150, 105, 0.25)" : "0 2px 6px rgba(37, 99, 235, 0.25)",
               transition: "all 0.15s ease",
             }}
           >
-            <RefreshCw size={13} style={{ animation: isLoading ? "spin 1s linear infinite" : "none" }} />
-            <span>{isLoading ? (isHi ? "स्कैन जारी..." : "Scanning...") : (isHi ? "पुनः स्कैन करें" : "Rescan")}</span>
+            {isLoading ? (
+              <>
+                <RefreshCw size={13} style={{ animation: "spin 1s linear infinite" }} />
+                <span>{isHi ? "स्कैन जारी..." : "Scanning..."}</span>
+              </>
+            ) : hasScanned ? (
+              <>
+                <RefreshCw size={13} />
+                <span>{isHi ? "पुनः स्कैन करें" : "Scan Again"}</span>
+              </>
+            ) : (
+              <>
+                <Search size={13} />
+                <span>{isHi ? "स्कैन एरिया" : "Scan Area"}</span>
+              </>
+            )}
           </button>
         </div>
       </div>
+
+      {/* Initial / Idle Scanner State: Only shown before the user explicitly clicks Scan Area */}
+      {!hasScanned && !isLoading && (
+        <div
+          style={{
+            padding: "24px 20px",
+            backgroundColor: "#f8fafc",
+            borderRadius: "12px",
+            border: "1.5px dashed #cbd5e1",
+            textAlign: "center",
+            marginBottom: "16px",
+          }}
+        >
+          <div
+            style={{
+              width: "48px",
+              height: "48px",
+              borderRadius: "50%",
+              backgroundColor: "#eff6ff",
+              color: "#2563eb",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 10px",
+            }}
+          >
+            <Search size={22} />
+          </div>
+          <h4 style={{ margin: "0 0 6px 0", color: "#0f172a", fontSize: "16px", fontWeight: 800 }}>
+            {isHi ? "अपने स्थानीय बाज़ार को स्कैन करने के लिए तैयार" : "Ready to scan your local market"}
+          </h4>
+          <p style={{ margin: "0 0 16px 0", color: "#64748b", fontSize: "13.5px", maxWidth: "560px", marginLeft: "auto", marginRight: "auto", lineHeight: "1.5" }}>
+            {isHi
+              ? "आस-पास के व्यवसायों, प्रतिस्पर्धियों, बैंकों, मंडियों और अन्य बुनियादी ढाँचे का विश्लेषण करने के लिए 'स्कैन एरिया' पर क्लिक करें।"
+              : "Click 'Scan Area' to analyze nearby businesses, competitors, banks, markets, and other infrastructure."}
+          </p>
+          <button
+            type="button"
+            onClick={() => handleScan()}
+            disabled={isLoading}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              backgroundColor: "#2563eb",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "8px",
+              padding: "10px 22px",
+              fontSize: "14px",
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: "0 2px 8px rgba(37, 99, 235, 0.3)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <Search size={16} />
+            <span>{isHi ? "स्कैन एरिया (Scan Area)" : "Scan Area"}</span>
+          </button>
+        </div>
+      )}
 
       {/* Status banner when loading */}
       {isLoading && (
         <div
           style={{
-            padding: "8px 14px",
+            padding: "10px 16px",
             backgroundColor: "#eff6ff",
             color: "#1d4ed8",
             border: "1px solid #bfdbfe",
             borderRadius: "8px",
-            fontSize: "12.5px",
+            fontSize: "13px",
             fontWeight: 600,
             marginBottom: "14px",
             display: "flex",
             alignItems: "center",
-            gap: "8px",
+            gap: "10px",
           }}
         >
-          <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⚙️</span>
-          <span>{scanStatusMessage || (isHi ? "स्कैनिंग जारी है..." : "Scanning OpenStreetMap Overpass...")}</span>
+          <RefreshCw size={15} style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
+          <span>{scanStatusMessage || (isHi ? "आपके स्थानीय इलाके को स्कैन किया जा रहा है..." : "Scanning your local area...")}</span>
         </div>
       )}
 
       {errorMessage && (
         <div
           style={{
-            padding: "8px 14px",
+            padding: "12px 16px",
             backgroundColor: "#fef2f2",
             color: "#dc2626",
             border: "1px solid #fecaca",
             borderRadius: "8px",
-            fontSize: "12.5px",
+            fontSize: "13px",
+            lineHeight: "1.6",
+            whiteSpace: "pre-line",
             marginBottom: "14px",
             display: "flex",
-            alignItems: "center",
-            gap: "8px",
+            alignItems: "flex-start",
+            gap: "10px",
           }}
         >
-          <AlertCircle size={15} />
-          <span>{errorMessage}</span>
+          <AlertCircle size={18} style={{ flexShrink: 0, marginTop: "2px" }} />
+          <div>{errorMessage}</div>
         </div>
       )}
 
@@ -740,61 +913,99 @@ out center;
       </div>
 
       {/* 2. Visual Integration (react-leaflet map container) */}
-      <div
-        style={{
-          width: "100%",
-          height: "400px",
-          borderRadius: "14px",
-          overflow: "hidden",
-          border: "1.5px solid #cbd5e1",
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        <MapContainer
-          key={`map-${activeLat}-${activeLng}`}
-          center={[activeLat, activeLng]}
-          zoom={searchRadius >= 50000 ? 9 : searchRadius >= 25000 ? 10 : 12}
-          scrollWheelZoom={false}
-          style={{ width: "100%", height: "100%" }}
+      {!mapCenter ? (
+        <div style={{ padding: "40px 20px", textAlign: "center", background: "#f8fafc", borderRadius: "14px", border: "1.5px dashed #cbd5e1" }}>
+          <AlertCircle size={32} style={{ color: "#d97706", margin: "0 auto 10px" }} />
+          <h4 style={{ margin: "0 0 6px 0", color: "#1e293b", fontSize: "16px", fontWeight: 700 }}>
+            {isHi ? "स्थान के निर्देशांक उपलब्ध नहीं हैं" : "Location Coordinates Pending"}
+          </h4>
+          <p style={{ margin: 0, color: "#64748b", fontSize: "13.5px", whiteSpace: "pre-line" }}>
+            {isHi
+              ? "आपका स्थान निर्धारित करने में असमर्थ।\n\nस्कैन करने से पहले कृपया स्थान चुनें या दर्ज करें।"
+              : "Unable to determine your location.\n\nPlease select or enter a location before scanning."}
+          </p>
+        </div>
+      ) : (
+        <div
+          style={{
+            width: "100%",
+            height: "400px",
+            borderRadius: "14px",
+            overflow: "hidden",
+            border: "1.5px solid #cbd5e1",
+            position: "relative",
+            zIndex: 1,
+          }}
         >
-          <MapRecenter center={[activeLat, activeLng]} radius={searchRadius} />
-
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          {/* Dynamic Radius Visualization Circle with semi-transparent blue fill */}
-          <Circle
-            center={[activeLat, activeLng]}
-            radius={searchRadius}
-            pathOptions={{
-              color: "#2563eb",
-              fillColor: "#3b82f6",
-              fillOpacity: 0.12,
-              weight: 2,
-              dashArray: "6, 6",
-            }}
-          />
-
-          {/* User's Business Center Marker */}
-          <Marker
-            position={[activeLat, activeLng]}
-            icon={createCustomMarkerIcon("user")}
+          {!hasScanned && (
+            <div
+              style={{
+                position: "absolute",
+                top: "12px",
+                right: "12px",
+                zIndex: 1000,
+                backgroundColor: "rgba(255, 255, 255, 0.95)",
+                backdropFilter: "blur(4px)",
+                padding: "7px 13px",
+                borderRadius: "8px",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "#1e40af",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                border: "1px solid #bfdbfe",
+              }}
+            >
+              <Search size={13} />
+              <span>{isHi ? "लाइव इकाइयाँ देखने के लिए 'स्कैन एरिया' पर क्लिक करें" : "Click 'Scan Area' to analyze live market"}</span>
+            </div>
+          )}
+          <MapContainer
+            key={`map-${mapCenter[0]}-${mapCenter[1]}`}
+            center={mapCenter}
+            zoom={searchRadius >= 50000 ? 9 : searchRadius >= 25000 ? 10 : 12}
+            scrollWheelZoom={false}
+            style={{ width: "100%", height: "100%" }}
           >
-            <Popup>
-              <div style={{ padding: "4px 2px", minWidth: "160px" }}>
-                <strong style={{ color: "#d97706", fontSize: "13px" }}>📍 {businessName}</strong>
-                <p style={{ margin: "4px 0 2px 0", fontSize: "11.5px", color: "#475569" }}>
-                  {district}, {state}
-                </p>
-                <div style={{ fontSize: "11px", color: "#059669", fontWeight: 700 }}>
-                  {isHi ? "स्कैन का केंद्र बिंदु (Center Point)" : "Scan Center (0.0 km)"}
+            <MapRecenter center={mapCenter} radius={searchRadius} />
+
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+
+            {/* Dynamic Radius Visualization Circle with semi-transparent blue fill */}
+            <Circle
+              center={mapCenter}
+              radius={searchRadius}
+              pathOptions={{
+                color: "#2563eb",
+                fillColor: "#3b82f6",
+                fillOpacity: 0.12,
+                weight: 2,
+                dashArray: "6, 6",
+              }}
+            />
+
+            {/* User's Business Center Marker */}
+            <Marker
+              position={mapCenter}
+              icon={createCustomMarkerIcon("user")}
+            >
+              <Popup>
+                <div style={{ padding: "4px 2px", minWidth: "160px" }}>
+                  <strong style={{ color: "#d97706", fontSize: "13px" }}>📍 {businessName}</strong>
+                  <p style={{ margin: "4px 0 2px 0", fontSize: "11.5px", color: "#475569" }}>
+                    {district}, {state}
+                  </p>
+                  <div style={{ fontSize: "11px", color: "#059669", fontWeight: 700 }}>
+                    {isHi ? "स्कैन का केंद्र बिंदु (Center Point)" : "Scan Center (0.0 km)"}
+                  </div>
                 </div>
-              </div>
-            </Popup>
-          </Marker>
+              </Popup>
+            </Marker>
 
           {/* Competitor Markers (Red Storefront Icon) */}
           {displayedCompetitors.map((node) => {
@@ -884,6 +1095,7 @@ out center;
           })}
         </MapContainer>
       </div>
+      )}
 
       {/* Error Banner: Visible exact error state */}
       {scanError && (
@@ -937,21 +1149,32 @@ out center;
               ? isHi
                 ? "प्रतिस्पर्धा जांची जा रही है..."
                 : "Scanning competition..."
-              : marketSaturationScore || (isHi ? "प्रतिस्पर्धा का स्तर सामान्य" : "Moderate Competition")}
+              : !hasScanned
+              ? isHi
+                ? "अभी स्कैन नहीं हुआ"
+                : "Not scanned yet"
+              : marketSaturationScore ||
+                (competitors.length === 0
+                  ? isHi
+                    ? "स्कैन पूरा — 0 प्रतिद्वंदी मिले"
+                    : "Scan completed — 0 competitors found"
+                  : `${competitors.length} ${isHi ? "प्रतिस्पर्धी मिले" : "Competitors Found"}`)}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
             {isLoading || isScanning ? (
               <span>{isHi ? "स्थानीय दुकानों का विवरण खोजा जा रहा है..." : "Scanning local businesses..."}</span>
-            ) : isHi ? (
-              `${searchRadius / 1000} किमी के दायरे में ${competitors.length} प्रतिस्पर्धी इकाइयाँ सक्रिय हैं।`
+            ) : !hasScanned ? (
+              <span>{isHi ? "प्रतिस्पर्धियों की वास्तविक संख्या देखने के लिए 'स्कैन एरिया' पर क्लिक करें।" : "Click 'Scan Area' to analyze nearby competitors."}</span>
+            ) : competitors.length === 0 ? (
+              <span>{isHi ? `${searchRadius / 1000} किमी दायरे में कोई समान दुकान नहीं मिली (प्रथम प्रस्तावक लाभ)।` : `Scan completed — 0 competitors found in ${searchRadius / 1000}km (First-Mover Advantage).`}</span>
             ) : (
-              `${competitors.length} similar businesses operating within ${searchRadius / 1000}km radius.`
+              <span>{isHi ? `${searchRadius / 1000} किमी के दायरे में ${competitors.length} प्रतिस्पर्धी इकाइयाँ सक्रिय हैं।` : `${competitors.length} similar businesses operating within ${searchRadius / 1000}km radius.`}</span>
             )}
           </div>
 
           {/* First-Mover Advantage Badge */}
-          {isDeepRural && (
+          {hasScanned && isDeepRural && (
             <div
               style={{
                 marginTop: "10px",
@@ -1008,26 +1231,36 @@ out center;
               ? isHi
                 ? "बैंक शाखा खोजी जा रही है..."
                 : "Scanning nearby branches..."
+              : !hasScanned
+              ? isHi
+                ? "अभी स्कैन नहीं हुआ"
+                : "Not scanned yet"
               : nearestBank
               ? isHi
                 ? `निकटतम बैंक: ${nearestBank.distKm} किमी`
                 : `Nearest Bank: ${nearestBank.distKm} km`
               : isHi
-              ? "बैंक शाखा उपलब्ध (ग्रामीण केंद्र)"
-              : "Bank branch accessible in cluster"}
+              ? "स्कैन पूरा — कोई बैंक नहीं मिला"
+              : "Scan completed — 0 banks found"}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
-            {nearestBank ? (
+            {isLoading ? (
+              <span>{isHi ? "10-25 किमी में बैंक शाखाएँ खोजी जा रही हैं..." : "Searching banks within radius..."}</span>
+            ) : !hasScanned ? (
+              <span>{isHi ? "निकटतम बैंक शाखाएँ खोजने के लिए 'स्कैन एरिया' पर क्लिक करें।" : "Click 'Scan Area' to locate nearby banks."}</span>
+            ) : nearestBank ? (
               <span>🏦 {nearestBank.name}</span>
             ) : (
-              <span>{isHi ? "10-25 किमी में बैंक शाखाएँ उपलब्ध हैं।" : "Bank branches available within radius."}</span>
+              <span>{isHi ? `${searchRadius / 1000} किमी में कोई बैंक शाखा नहीं मिली।` : `No bank branches detected in ${searchRadius / 1000}km radius.`}</span>
             )}
           </div>
 
-          <div style={{ marginTop: "10px", fontSize: "11.5px", color: "#059669", fontWeight: 600 }}>
-            ✓ {isHi ? "सरकारी मुद्रा / PM FME ऋण प्रक्रिया के अनुकूल" : "Ideal for Mudra / PM FME loan documentation"}
-          </div>
+          {hasScanned && (
+            <div style={{ marginTop: "10px", fontSize: "11.5px", color: "#059669", fontWeight: 600 }}>
+              ✓ {isHi ? "सरकारी मुद्रा / PM FME ऋण प्रक्रिया के अनुकूल" : "Ideal for Mudra / PM FME loan documentation"}
+            </div>
+          )}
         </div>
 
         {/* Metric 3: Supply Chain */}
@@ -1065,26 +1298,36 @@ out center;
               ? isHi
                 ? "मंडी व गोदाम खोज जारी..."
                 : "Scanning local mandis..."
+              : !hasScanned
+              ? isHi
+                ? "अभी स्कैन नहीं हुआ"
+                : "Not scanned yet"
               : nearestMarket
               ? isHi
                 ? `निकटतम मंडी / गोदाम: ${nearestMarket.distKm} किमी`
                 : `Nearest Mandi/Warehouse: ${nearestMarket.distKm} km`
               : isHi
-              ? "तहसील मंडी व गोदाम केंद्र उपलब्ध"
-              : "Tehsil mandi & storage hub accessible"}
+              ? "स्कैन पूरा — कोई मंडी नहीं मिली"
+              : "Scan completed — 0 mandis found"}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
-            {nearestMarket ? (
+            {isLoading ? (
+              <span>{isHi ? "मंडी व वेयरहाउस की खोज..." : "Searching local mandis & warehouses..."}</span>
+            ) : !hasScanned ? (
+              <span>{isHi ? "आस-पास की मंडियों और गोदामों का पता लगाने के लिए 'स्कैन एरिया' पर क्लिक करें।" : "Click 'Scan Area' to locate nearby mandis."}</span>
+            ) : nearestMarket ? (
               <span>📦 {nearestMarket.name}</span>
             ) : (
-              <span>{isHi ? "कृषि उपज मंडी समिति व गोदाम" : "Agricultural APMC & storage yard"}</span>
+              <span>{isHi ? `${searchRadius / 1000} किमी में कोई मंडी/गोदाम नहीं मिला।` : `No mandis detected within ${searchRadius / 1000}km radius.`}</span>
             )}
           </div>
 
-          <div style={{ marginTop: "10px", fontSize: "11.5px", color: "#2563eb", fontWeight: 600 }}>
-            ✓ {isHi ? "कच्चा माल मंगाने व तैयार उत्पाद बेचने का मुख्य केंद्र" : "Key hub for raw materials & product distribution"}
-          </div>
+          {hasScanned && (
+            <div style={{ marginTop: "10px", fontSize: "11.5px", color: "#2563eb", fontWeight: 600 }}>
+              ✓ {isHi ? "कच्चा माल मंगाने व तैयार उत्पाद बेचने का मुख्य केंद्र" : "Key hub for raw materials & product distribution"}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1093,21 +1336,25 @@ out center;
         style={{
           marginTop: "14px",
           padding: "12px 16px",
-          backgroundColor: "#f0fdf4",
-          border: "1px solid #bbf7d0",
+          backgroundColor: hasScanned ? "#f0fdf4" : "#f8fafc",
+          border: hasScanned ? "1px solid #bbf7d0" : "1px solid #e2e8f0",
           borderRadius: "10px",
           display: "flex",
           alignItems: "center",
           gap: "10px",
           fontSize: "13px",
-          color: "#166534",
+          color: hasScanned ? "#166534" : "#475569",
         }}
       >
-        <TrendingUp size={16} style={{ color: "#16a34a", flexShrink: 0 }} />
+        <TrendingUp size={16} style={{ color: hasScanned ? "#16a34a" : "#64748b", flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
           <strong>{isHi ? "AI व्यापार साथी के लिए विश्लेषण:" : "Actionable Intelligence for AI Mentor:"}</strong>{" "}
           <span>
-            {competitors.length <= 2
+            {!hasScanned
+              ? isHi
+                ? "स्थान का विश्लेषण शुरू करने के लिए ऊपर 'स्कैन एरिया' पर क्लिक करें। लाइव फील्ड डेटा मिलते ही यहाँ सटीक सलाह दिखाई देगी।"
+                : "Click 'Scan Area' above to analyze your local market infrastructure and competition. Real-time guidance will appear here."
+              : competitors.length <= 2
               ? isHi
                 ? "इलाके में कम दुकानें हैं, इसलिए सीधे ग्राहक सेवा और ताज़गी के दम पर बाज़ार में एकाधिकार बनाया जा सकता है।"
                 : "Low competition density gives strong pricing power and room for rapid customer acquisition."

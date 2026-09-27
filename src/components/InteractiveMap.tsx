@@ -28,19 +28,38 @@ export default function InteractiveMap({ onLocationFound }: InteractiveMapProps)
           const lng = pos.coords.longitude;
           setPosition([lat, lng]);
 
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8000);
+
           try {
-            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+              {
+                headers: {
+                  "User-Agent": "VyapaarAI-InteractiveMap/1.0",
+                  "Accept-Language": "en,hi",
+                },
+                signal: controller.signal,
+              }
+            );
+            clearTimeout(timer);
+
+            if (!res.ok) {
+              throw new Error(`Nominatim returned HTTP ${res.status}`);
+            }
+
             const data = await res.json();
+            const address = data?.address || {};
             
-            const state = data.address.state || "";
-            const district = data.address.state_district || data.address.county || "Unknown District";
-            const pin = data.address.postcode || "Unknown PIN";
+            const state = address.state || "";
+            const district = address.state_district || address.county || "Unknown District";
+            const pin = address.postcode || "Unknown PIN";
             const block =
-              data.address.subdistrict ||
-              data.address.county ||
-              data.address.suburb ||
-              data.address.town ||
-              data.address.village ||
+              address.subdistrict ||
+              address.county ||
+              address.suburb ||
+              address.town ||
+              address.village ||
               "";
             
             setLocationDetails(`District: ${district}${block ? ` | Block: ${block}` : ''} | PIN: ${pin}`);
@@ -49,6 +68,7 @@ export default function InteractiveMap({ onLocationFound }: InteractiveMapProps)
               onLocationFound(state, district, pin, block);
             }
           } catch (error) {
+            clearTimeout(timer);
             console.error("Geocoding failed", error);
             setLocationDetails("Failed to fetch area details from map server.");
           }
