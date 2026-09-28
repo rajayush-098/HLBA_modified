@@ -12,8 +12,9 @@ import {
   Building2,
   HelpCircle,
   Mic,
-  MicOff,
   AlertCircle,
+  Square,
+  Radio,
 } from "lucide-react";
 import { getAdvisorAdvice } from "../advisorLogic";
 import { speakText, stopSpeaking } from "../utils/speech";
@@ -126,12 +127,20 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
   const [copiedId, setCopiedId] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Speech Recognition State for Voice Input
+  // Voice Conversation Mode State & Single Authoritative Refs
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [voiceState, setVoiceState] = useState("idle"); // "idle" | "listening" | "thinking" | "speaking"
+  const [voiceTranscript, setVoiceTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [speechError, setSpeechError] = useState("");
+
+  const voiceModeActiveRef = useRef(false);
   const recognitionRef = useRef(null);
-  const baseTextRef = useRef("");
   const isStartingRef = useRef(false);
+  const isSendingRef = useRef(false);
+  const voiceRestartTimeoutRef = useRef(null);
+  const triggerVoiceQueryRef = useRef(null);
+  const startVoiceListeningRef = useRef(null);
 
   // Safe detection of Web Speech API
   const isSpeechSupported = typeof window !== "undefined" && Boolean(
@@ -158,18 +167,52 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
     }
   }, []);
 
-  // Clean up recognition session when component unmounts
+  // Clean up recognition session and speech on unmount
   useEffect(() => {
     return () => {
+      voiceModeActiveRef.current = false;
+      if (voiceRestartTimeoutRef.current) {
+        clearTimeout(voiceRestartTimeoutRef.current);
+        voiceRestartTimeoutRef.current = null;
+      }
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
         } catch {
-          // Ignore abort errors on unmount
+          // Ignore abort error on unmount
         }
         recognitionRef.current = null;
       }
+      stopSpeaking();
     };
+  }, []);
+
+  // Safely and completely end voice conversation mode
+  const endVoiceMode = useCallback(() => {
+    voiceModeActiveRef.current = false;
+    setIsVoiceMode(false);
+    setVoiceState("idle");
+    setVoiceTranscript("");
+    setIsListening(false);
+    isStartingRef.current = false;
+    isSendingRef.current = false;
+
+    if (voiceRestartTimeoutRef.current) {
+      clearTimeout(voiceRestartTimeoutRef.current);
+      voiceRestartTimeoutRef.current = null;
+    }
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {
+        // Ignore abort errors
+      }
+      recognitionRef.current = null;
+    }
+
+    stopSpeaking();
+    setSpeakingId(null);
   }, []);
 
   const stopListening = useCallback(() => {
@@ -185,106 +228,116 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
     isStartingRef.current = false;
   }, []);
 
-  const toggleListening = () => {
-    if (isListening || recognitionRef.current) {
-      stopListening();
+  // Core recognition loop for hands-free Voice Mode
+  const startVoiceListening = useCallback(() => {
+    if (!voiceModeActiveRef.current) return;
+    if (!isSpeechSupported) {
+      setSpeechError(
+        isHi
+          ? "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया टाइप करके सवाल पूछें।"
+          : "Voice input is not supported in this browser. Please type your question instead."
+      );
+      endVoiceMode();
       return;
     }
 
     if (isStartingRef.current) return;
     isStartingRef.current = true;
 
-    if (!isSpeechSupported) {
-      isStartingRef.current = false;
-      setSpeechError(
-        isHi
-          ? "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया टाइप करके सवाल पूछें।"
-          : "Voice input isn't supported in this browser. Please type your question instead."
-      );
-      return;
+    // Abort any existing instance to prevent duplicates
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {
+        // Ignore abort
+      }
+      recognitionRef.current = null;
     }
+
+    setVoiceState("listening");
+    setIsListening(true);
+    setVoiceTranscript("");
+    setSpeechError("");
 
     try {
       const SpeechRecognitionClass =
         window.SpeechRecognition || window.webkitSpeechRecognition;
       const recognition = new SpeechRecognitionClass();
       recognitionRef.current = recognition;
-      recognition.continuous = true;
+      recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = getRecognitionLang(lang);
       recognition.maxAlternatives = 1;
 
-      // Preserve any existing typed text before recognition starts
-      baseTextRef.current = inputQuestion;
+      let capturedFinal = "";
 
       recognition.onstart = () => {
         isStartingRef.current = false;
-        setIsListening(true);
-        setSpeechError("");
+        if (voiceModeActiveRef.current) {
+          setIsListening(true);
+          setVoiceState("listening");
+          setSpeechError("");
+        }
       };
 
       recognition.onresult = (event) => {
-        let sessionFinal = "";
-        let sessionInterim = "";
-
+        let interim = "";
         for (let i = 0; i < event.results.length; ++i) {
-          const piece = event.results[i][0]?.transcript || "";
-          if (event.results[i].isFinal) {
-            sessionFinal += piece;
+          const item = event.results[i];
+          const text = item[0]?.transcript || "";
+          if (item.isFinal) {
+            capturedFinal += text;
           } else {
-            sessionInterim += piece;
+            interim += text;
           }
         }
-
-        const base = (baseTextRef.current || "").trim();
-        const spoken = (sessionFinal + sessionInterim).trim();
-
-        if (!spoken) return;
-
-        const combined = base ? `${base} ${spoken}` : spoken;
-        setInputQuestion(combined);
-        setErrorMsg("");
-        setSpeechError("");
+        const spoken = (capturedFinal || interim).trim();
+        if (spoken) {
+          setVoiceTranscript(spoken);
+        }
       };
 
       recognition.onerror = (event) => {
         isStartingRef.current = false;
-        setIsListening(false);
-        recognitionRef.current = null;
-
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
           setSpeechError(
             isHi
               ? "माइक्रोफ़ोन अनुमति अस्वीकृत कर दी गई। कृपया माइक्रोफ़ोन की अनुमति दें या अपना सवाल टाइप करें।"
               : "Microphone permission was denied. Please allow microphone access or type your question instead."
           );
-        } else if (event.error === "no-speech") {
-          setSpeechError(
-            isHi
-              ? "कोई आवाज़ नहीं सुनी गई। कृपया पुनः प्रयास करें।"
-              : "No speech detected. Please try again."
-          );
-        } else if (event.error === "network") {
-          setSpeechError(
-            isHi
-              ? "वॉयस सेवा से संपर्क नहीं हो सका। कृपया अपना नेटवर्क जांचें या सवाल टाइप करें।"
-              : "Could not connect to speech service. Please check your connection or type your question."
-          );
-        } else if (event.error === "aborted") {
-          // Normal user abort, no error required
-        } else {
-          setSpeechError(
-            isHi
-              ? "वॉयस पहचान में समस्या आई। कृपया पुनः प्रयास करें या सवाल टाइप करें।"
-              : "Voice recognition error. Please try again or type your question."
-          );
+          endVoiceMode();
         }
+        // Silence or abort errors will be handled seamlessly in onend
       };
 
       recognition.onend = () => {
         isStartingRef.current = false;
         setIsListening(false);
         recognitionRef.current = null;
+
+        if (!voiceModeActiveRef.current) {
+          setVoiceState("idle");
+          return;
+        }
+
+        const query = capturedFinal.trim();
+        if (query) {
+          // Final transcript captured: automatically submit to AI without interim noise
+          setVoiceTranscript("");
+          if (triggerVoiceQueryRef.current) {
+            triggerVoiceQueryRef.current(query);
+          }
+        } else {
+          // No speech or silence detected: restart listening after short debounce if voice mode still active
+          if (voiceModeActiveRef.current && !isSendingRef.current) {
+            if (voiceRestartTimeoutRef.current) clearTimeout(voiceRestartTimeoutRef.current);
+            voiceRestartTimeoutRef.current = setTimeout(() => {
+              if (voiceModeActiveRef.current && !isSendingRef.current) {
+                startVoiceListeningRef.current?.();
+              }
+            }, 350);
+          }
+        }
       };
 
       recognition.start();
@@ -295,9 +348,41 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
       console.warn("Speech recognition initialization error:", err);
       setSpeechError(
         isHi
-          ? "वॉयस पहचान शुरू नहीं हो सकी। कृपया अपना सवाल टाइप करें।"
-          : "Failed to start voice recognition. Please type your question."
+          ? "वॉयस पहचान शुरू नहीं हो सकी। कृपया दोबारा प्रयास करें।"
+          : "Failed to start voice recognition. Please try again."
       );
+      endVoiceMode();
+    }
+  }, [endVoiceMode, getRecognitionLang, isHi, isSpeechSupported, lang]);
+
+  useEffect(() => {
+    startVoiceListeningRef.current = startVoiceListening;
+  }, [startVoiceListening]);
+
+  // Activate continuous hands-free Voice Mode
+  const startVoiceMode = () => {
+    if (!isSpeechSupported) {
+      setSpeechError(
+        isHi
+          ? "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया टाइप करके सवाल पूछें।"
+          : "Voice input is not supported in this browser. Please type your question instead."
+      );
+      return;
+    }
+    stopSpeaking();
+    setSpeakingId(null);
+    voiceModeActiveRef.current = true;
+    setIsVoiceMode(true);
+    setVoiceState("listening");
+    startVoiceListeningRef.current?.();
+  };
+
+  // Toggle voice conversation mode on/off
+  const toggleVoiceMode = () => {
+    if (isVoiceMode || voiceModeActiveRef.current) {
+      endVoiceMode();
+    } else {
+      startVoiceMode();
     }
   };
 
@@ -378,11 +463,13 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
     const q = (queryText || inputQuestion).trim();
     if (!q) {
       setErrorMsg(isHi ? "कृपया अपना सवाल लिखें या नीचे से चुनें।" : "Please type a question or pick one from below.");
-      return;
+      return "";
     }
 
     setErrorMsg("");
-    setInputQuestion("");
+    if (!queryText) {
+      setInputQuestion("");
+    }
     stopSpeaking();
     setSpeakingId(null);
 
@@ -401,6 +488,8 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
 
     setLoading(true);
     scrollToBottom();
+
+    let finalReply;
 
     try {
       const activeLanguage = languageNames[lang] || lang || "Hindi";
@@ -480,6 +569,8 @@ When advising the user, actively use the real-time market data. If they ask abou
         throw new Error("No response content returned from advisor");
       }
 
+      finalReply = generatedReply;
+
       // Append the actual generated content string into the chat message state
       setMessages((prev) =>
         prev.map((m) =>
@@ -521,6 +612,8 @@ When advising the user, actively use the real-time market data. If they ask abou
             ? `प्रोफाइल: ${ctx.businessName || "व्यवसाय"}, ${locationLabel}\nयोजना: ${ctx.matchedScheme || "सरकारी योजना"}\n${ctx.promoterMargin != null ? `मार्जिन: ₹${Number(ctx.promoterMargin).toLocaleString("en-IN")} | ` : ""}${ctx.eligibleLoan != null ? `बैंक लोन: ₹${Number(ctx.eligibleLoan).toLocaleString("en-IN")} | ` : ""}${ctx.monthlyEmi != null ? `EMI: ₹${Number(ctx.monthlyEmi).toLocaleString("en-IN")}` : ""}\n\nव्यापार सलाह: अपने शुरुआती निवेश को सीमित रखने के लिए उपकरण चरणबद्ध तरीके से खरीदें। क्रेडिट लिंक्ड सरकारी योजना के तहत मिलने वाली पूंजीगत सहायता से अपने कार्यशील पूंजी मार्जिन को सुरक्षित रखें।`
             : `Profile: ${ctx.businessName || "Business"}, ${locationLabel}\nMatched Scheme: ${ctx.matchedScheme || "Credit Scheme"}\n${ctx.promoterMargin != null ? `Margin: ₹${Number(ctx.promoterMargin).toLocaleString("en-IN")} | ` : ""}${ctx.eligibleLoan != null ? `Loan: ₹${Number(ctx.eligibleLoan).toLocaleString("en-IN")} | ` : ""}${ctx.monthlyEmi != null ? `EMI: ₹${Number(ctx.monthlyEmi).toLocaleString("en-IN")}` : ""}\n\nBusiness Advice: Phase your machinery procurement to reduce upfront capital requirements, and leverage credit-linked capital assistance to maintain positive cash flow.`);
 
+        finalReply = fallbackAnswer;
+
         setMessages((prev) =>
           prev.map((m) =>
             m.id === advisorMsgId
@@ -535,15 +628,17 @@ When advising the user, actively use the real-time market data. If they ask abou
         );
       } catch (fbErr) {
         console.error("Fallback error:", fbErr);
+        const errorReply =
+          isHi
+            ? "माफ़ कीजिए, अभी जवाब प्राप्त करने में थोड़ी समस्या आई। कृपया दोबारा प्रयास करें।"
+            : "Sorry, could not generate advice at this moment. Please try again.";
+        finalReply = errorReply;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === advisorMsgId
               ? {
                   ...m,
-                  text:
-                    isHi
-                      ? "माफ़ कीजिए, अभी जवाब प्राप्त करने में थोड़ी समस्या आई। कृपया दोबारा प्रयास करें।"
-                      : "Sorry, could not generate advice at this moment. Please try again.",
+                  text: errorReply,
                   isLoading: false,
                   isStreaming: false,
                   isError: true,
@@ -556,7 +651,60 @@ When advising the user, actively use the real-time market data. If they ask abou
       setLoading(false);
       scrollToBottom();
     }
+
+    return finalReply;
   };
+
+  // Automated Voice Conversation pipeline
+  const triggerVoiceQuery = useCallback(
+    async (queryText) => {
+      if (!voiceModeActiveRef.current || isSendingRef.current) return;
+      isSendingRef.current = true;
+      setVoiceState("thinking");
+
+      let reply = "";
+      try {
+        reply = await handleSend(queryText);
+      } catch (err) {
+        console.error("Voice conversation query error:", err);
+      } finally {
+        isSendingRef.current = false;
+      }
+
+      if (!voiceModeActiveRef.current) {
+        setVoiceState("idle");
+        return;
+      }
+
+      // Voice State: Speaking response via TTS
+      setVoiceState("speaking");
+      const cleanReply = (reply || "").trim();
+
+      const spoken = speakText(cleanReply, lang, () => {
+        // When speech finishes: automatically resume listening for user's next question
+        if (voiceModeActiveRef.current) {
+          startVoiceListening();
+        } else {
+          setVoiceState("idle");
+        }
+      });
+
+      // If speech synthesis could not run or finished synchronously
+      if (!spoken) {
+        if (voiceModeActiveRef.current) {
+          startVoiceListening();
+        } else {
+          setVoiceState("idle");
+        }
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lang, startVoiceListening]
+  );
+
+  useEffect(() => {
+    triggerVoiceQueryRef.current = triggerVoiceQuery;
+  }, [triggerVoiceQuery]);
 
   const handleSendMessage = handleSend;
   const handleSubmit = (e) => {
@@ -767,6 +915,209 @@ When advising the user, actively use the real-time market data. If they ask abou
           })}
         </div>
       </div>
+
+      {/* Dedicated Hands-Free Voice Conversation Mode Control Bar */}
+      {!isVoiceMode ? (
+        <div
+          style={{
+            background: "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)",
+            border: "1.5px solid #93c5fd",
+            borderRadius: "12px",
+            padding: "12px 18px",
+            marginBottom: "16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "12px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              style={{
+                width: "36px",
+                height: "36px",
+                borderRadius: "50%",
+                backgroundColor: "#2563eb",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#ffffff",
+                flexShrink: 0,
+              }}
+            >
+              <Mic size={18} />
+            </div>
+            <div>
+              <div style={{ fontSize: "13.5px", fontWeight: 700, color: "#1e3a8a" }}>
+                {isHi ? "वॉयस बातचीत मोड (हैंड्स-फ्री वॉयस)" : "Voice Conversation Mode (Hands-Free)"}
+              </div>
+              <div style={{ fontSize: "12px", color: "#3b82f6" }}>
+                {isHi
+                  ? "बोलकर सवाल पूछें → AI जवाब देगा और बोलेगा → फिर से सुनेगा (टाइप करने या Send दबाने की ज़रूरत नहीं)"
+                  : "Speak question → AI responds & speaks → listens again automatically (No typing or Send needed)"}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={startVoiceMode}
+            disabled={loading || !isSpeechSupported}
+            style={{
+              backgroundColor: "#2563eb",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "8px",
+              padding: "9px 16px",
+              fontWeight: 700,
+              fontSize: "13px",
+              cursor: loading || !isSpeechSupported ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "7px",
+              boxShadow: "0 2px 6px rgba(37, 99, 235, 0.25)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <Radio size={15} />
+            <span>{isHi ? "Start Voice Conversation (बातचीत शुरू करें)" : "Start Voice Conversation"}</span>
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            background:
+              voiceState === "listening"
+                ? "linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)"
+                : voiceState === "thinking"
+                ? "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)"
+                : "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)",
+            border: `1.5px solid ${
+              voiceState === "listening"
+                ? "#f87171"
+                : voiceState === "thinking"
+                ? "#60a5fa"
+                : "#34d399"
+            }`,
+            borderRadius: "12px",
+            padding: "14px 18px",
+            marginBottom: "16px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+            transition: "all 0.25s ease",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              {voiceState === "listening" && (
+                <>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: "11px",
+                      height: "11px",
+                      borderRadius: "50%",
+                      backgroundColor: "#ef4444",
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
+                  <Mic size={20} color="#dc2626" />
+                  <span style={{ fontSize: "14px", fontWeight: 700, color: "#b91c1c" }}>
+                    {isHi ? "Listening... (सुन रहे हैं... बोलिए)" : "Listening..."}
+                  </span>
+                </>
+              )}
+              {voiceState === "thinking" && (
+                <>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: "11px",
+                      height: "11px",
+                      borderRadius: "50%",
+                      backgroundColor: "#2563eb",
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
+                  <Bot size={20} color="#1d4ed8" />
+                  <span style={{ fontSize: "14px", fontWeight: 700, color: "#1d4ed8" }}>
+                    {isHi ? "Thinking... (AI सोच रहा है...)" : "Thinking..."}
+                  </span>
+                </>
+              )}
+              {voiceState === "speaking" && (
+                <>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: "11px",
+                      height: "11px",
+                      borderRadius: "50%",
+                      backgroundColor: "#059669",
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
+                  <Volume2 size={20} color="#059669" />
+                  <span style={{ fontSize: "14px", fontWeight: 700, color: "#047857" }}>
+                    {isHi ? "Speaking... (AI बोल रहा है...)" : "Speaking..."}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {/* End Voice Conversation Button */}
+            <button
+              type="button"
+              onClick={endVoiceMode}
+              style={{
+                backgroundColor: "#dc2626",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "8px",
+                padding: "8px 16px",
+                fontWeight: 700,
+                fontSize: "13px",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                boxShadow: "0 2px 6px rgba(220, 38, 38, 0.2)",
+                transition: "all 0.15s ease",
+              }}
+              title="Stop continuous voice conversation"
+            >
+              <Square size={13} fill="#ffffff" />
+              <span>{isHi ? "End Voice Conversation (समाप्त करें)" : "End Voice Conversation"}</span>
+            </button>
+          </div>
+
+          {/* Transcript preview when user speaks */}
+          {voiceTranscript && (
+            <div
+              style={{
+                backgroundColor: "rgba(255, 255, 255, 0.8)",
+                padding: "8px 12px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                color: "#334155",
+                fontStyle: "italic",
+                marginTop: "10px",
+                border: "1px dashed #cbd5e1",
+              }}
+            >
+              "{voiceTranscript}"
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Main Chat Thread */}
       <div
@@ -1013,10 +1364,10 @@ When advising the user, actively use the real-time market data. If they ask abou
             }
           }}
           placeholder={
-            isListening
+            isVoiceMode
               ? isHi
-                ? "सुन रहे हैं... कृपया अपना सवाल बोलें..."
-                : "Listening... please speak your question..."
+                ? "🎙️ वॉयस मोड चालू है... अपना सवाल बोलें (AI सुनकर जवाब देगा और बोलेगा)..."
+                : "🎙️ Voice Mode Active... Speak your question (AI answers and speaks automatically)..."
               : isHi
               ? "यहाँ अपने व्यापार के बारे में कोई भी सवाल लिखें या बोलें..."
               : "Ask any question about your numbers (type or click microphone to speak)..."
@@ -1042,45 +1393,45 @@ When advising the user, actively use the real-time market data. If they ask abou
           {/* Microphone Voice Button */}
           <button
             type="button"
-            onClick={toggleListening}
+            onClick={toggleVoiceMode}
             disabled={loading || !isSpeechSupported}
             aria-label={
-              isListening
+              isVoiceMode
                 ? isHi
-                  ? "आवाज़ सुनना बंद करें"
-                  : "Stop listening"
+                  ? "वॉयस बातचीत समाप्त करें"
+                  : "End voice conversation"
                 : isHi
-                ? "वॉयस से सवाल पूछें"
-                : "Ask the AI Business Advisor using voice"
+                ? "वॉयस बातचीत शुरू करें"
+                : "Start voice conversation"
             }
             title={
               !isSpeechSupported
                 ? isHi
                   ? "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया टाइप करके सवाल पूछें।"
                   : "Voice input isn't supported in this browser. Please type your question instead."
-                : isListening
+                : isVoiceMode
                 ? isHi
-                  ? "सुनना रोकें (Click to stop listening)"
-                  : "Click to stop listening"
+                  ? "वॉयस बातचीत बंद करें (Click to end voice conversation)"
+                  : "Click to end voice conversation"
                 : isHi
-                ? "बोलकर पूछें (Ask by voice)"
-                : "Ask by voice"
+                ? "बोलकर बातचीत शुरू करें (Start Voice Conversation)"
+                : "Start Voice Conversation"
             }
             style={{
               height: "44px",
-              padding: isListening ? "0 14px" : "0 12px",
+              padding: isVoiceMode ? "0 14px" : "0 12px",
               borderRadius: "8px",
-              border: isListening
+              border: isVoiceMode
                 ? "1.5px solid #EF4444"
                 : !isSpeechSupported
                 ? "1.5px solid #E5E7EB"
                 : "1.5px solid #F59E0B",
-              backgroundColor: isListening
+              backgroundColor: isVoiceMode
                 ? "#FEE2E2"
                 : !isSpeechSupported
                 ? "#F3F4F6"
                 : "#FEF3C7",
-              color: isListening
+              color: isVoiceMode
                 ? "#DC2626"
                 : !isSpeechSupported
                 ? "#9CA3AF"
@@ -1094,7 +1445,7 @@ When advising the user, actively use the real-time market data. If they ask abou
               transition: "all 0.15s ease",
             }}
           >
-            {isListening ? (
+            {isVoiceMode ? (
               <>
                 <span
                   style={{
@@ -1106,14 +1457,20 @@ When advising the user, actively use the real-time market data. If they ask abou
                     animation: "pulse 1s infinite",
                   }}
                 />
-                <MicOff size={16} />
-                <span>{isHi ? "सुन रहे हैं..." : "Listening..."}</span>
+                <Square size={13} fill="#DC2626" />
+                <span>
+                  {voiceState === "speaking"
+                    ? isHi ? "बोल रहे हैं..." : "Speaking..."
+                    : voiceState === "thinking"
+                    ? isHi ? "सोच रहे हैं..." : "Thinking..."
+                    : isHi ? "सुन रहे हैं..." : "Listening..."}
+                </span>
               </>
             ) : (
               <>
                 <Mic size={17} style={{ opacity: isSpeechSupported ? 1 : 0.5 }} />
                 <span className="hidden sm:inline" style={{ fontSize: "12.5px" }}>
-                  {isHi ? "बोलकर पूछें" : "Ask by voice"}
+                  {isHi ? "वॉयस मोड" : "Voice Mode"}
                 </span>
               </>
             )}
