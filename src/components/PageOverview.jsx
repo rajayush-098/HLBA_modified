@@ -25,7 +25,7 @@ export default function PageOverview({ result, formatCurrency, lang, onJumpPage 
   );
 
   const margin = result.scheme_analysis?.beneficiary_contribution ?? (Number(result.investment) || 0);
-  const eligibleLoan = result.scheme_analysis?.eligible_loan ?? Math.max(0, (result.scheme_analysis?.project_cost || (margin / 0.1)) - margin);
+  const eligibleLoan = result.scheme_analysis?.eligible_loan ?? 0;
   const capitalData = [
     {
       name: isHi ? "उद्यमी अंशदान (मार्जिन)" : "Promoter Margin (Own)",
@@ -234,22 +234,28 @@ export default function PageOverview({ result, formatCurrency, lang, onJumpPage 
               <div>
                 <strong>{isHi ? "सरकारी लोन सुविधा:" : "Government Loan Eligibility:"}</strong>
                 <span>
-                  {isHi
+                  {result.scheme_analysis?.status === "Not Eligible"
+                    ? isHi
+                      ? " प्रोजेक्ट लागत ₹50 लाख से अधिक होने के कारण मानक योजना के तहत ऋण उपलब्ध नहीं है। अन्य विकल्पों की जाँच करें।"
+                      : " Project cost exceeds ₹50 Lakh scheme limit. Check other financing options."
+                    : isHi
                     ? ` आप ${result.scheme_analysis?.scheme_name || "सरकारी योजना"} के तहत लगभग ${formatCurrency(result.scheme_analysis?.eligible_loan)} तक का बैंक लोन ले सकते हैं।`
                     : ` You are eligible for up to ${formatCurrency(result.scheme_analysis?.eligible_loan)} under the ${result.scheme_analysis?.scheme_name || "Govt Loan Scheme"}.`}
                 </span>
               </div>
             </div>
-            <div className="bullet-point">
-              <div>
-                <strong>{isHi ? "महीने की किश्त (EMI):" : "Monthly Loan EMI:"}</strong>
-                <span>
-                  {isHi
-                    ? ` बैंक की महीने की किश्त लगभग ${formatCurrency(result.loan_affordability?.monthly_emi)} होगी, जिसे आपके मुनाफे से आसानी से भरा जा सकता है।`
-                    : ` The monthly loan EMI is estimated at ${formatCurrency(result.loan_affordability?.monthly_emi)}, which is comfortably covered by your profit.`}
-                </span>
+            {result.scheme_analysis?.status !== "Not Eligible" && (
+              <div className="bullet-point">
+                <div>
+                  <strong>{isHi ? "महीने की किश्त (EMI):" : "Monthly Loan EMI:"}</strong>
+                  <span>
+                    {isHi
+                      ? ` बैंक की महीने की किश्त लगभग ${formatCurrency(result.loan_affordability?.monthly_emi)} होगी, जिसे आपके मुनाफे से आसानी से भरा जा सकता है।`
+                      : ` The monthly loan EMI is estimated at ${formatCurrency(result.loan_affordability?.monthly_emi)}, which is comfortably covered by your profit.`}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
             <div className="bullet-point">
               <div>
                 <strong>{isHi ? "स्थानीय माँग:" : "Local Village Demand:"}</strong>

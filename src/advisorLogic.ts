@@ -268,6 +268,13 @@ export interface AdvisorRequest {
   monthly_emi?: number;
   local_demand?: string;
   competition_level?: string;
+  scheme_name?: string;
+  eligible_loan?: number;
+  project_cost?: number;
+  promoter_margin?: number;
+  interest_rate?: number | null;
+  loan_tenure_months?: number | null;
+  moratorium_months?: number | null;
 }
 
 function formatCurrency(val: number): string {
@@ -341,7 +348,15 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
       answer = 'Please provide valid revenue information for a detailed expense analysis.';
     }
   } else if (['loan', 'emi', 'repayment', 'afford', 'affordable', 'pay loan'].some((w) => question.includes(w))) {
-    answer = `Your current loan affordability status is '${affordabilityStatus}'. `;
+    let schemePrefix = '';
+    if (data.scheme_name) {
+      if (data.eligible_loan != null && data.eligible_loan > 0) {
+        schemePrefix = `Under the ${data.scheme_name} (SIH26091 core rules), your eligible loan is ₹${formatCurrency(data.eligible_loan)}${data.interest_rate != null ? ` at ${data.interest_rate}% annual interest` : ''} for ${data.loan_tenure_months || 36} months (including ${data.moratorium_months || 3}-month moratorium). `;
+      } else {
+        schemePrefix = `Under SIH26091 rules, this project does not qualify for standard scheme credit (project cost exceeds ₹50 lakh). `;
+      }
+    }
+    answer = `${schemePrefix}Your current loan affordability status is '${affordabilityStatus}'. `;
     if (monthlyEmi > 0) {
       answer += `The estimated monthly EMI is ₹${formatCurrency(monthlyEmi)}. `;
     }

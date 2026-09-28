@@ -798,8 +798,8 @@ function App() {
       monthlyProfit: result?.financial_analysis?.monthly_profit ?? null,
       yearlyProfit: result?.financial_analysis?.yearly_profit ?? null,
       monthlyEmi: result?.loan_affordability?.monthly_emi ?? null,
-      loanTenureMonths: result?.loan_affordability?.loan_tenure_months ?? 36,
-      moratoriumMonths: result?.loan_affordability?.moratorium_months ?? 3,
+      loanTenureMonths: result?.loan_affordability?.loan_tenure_months ?? result?.scheme_analysis?.loan_tenure_months ?? null,
+      moratoriumMonths: result?.loan_affordability?.moratorium_months ?? result?.scheme_analysis?.moratorium_months ?? null,
       feasibility: result?.feasibilityVerdict || result?.feasibility || "",
       localDemand: result?.hyper_local_profile?.local_demand || "",
       competitionLevel: result?.hyper_local_profile?.competition_level || "",
@@ -992,11 +992,12 @@ function App() {
     const scheme = result.scheme_analysis?.scheme_name ?? "सरकारी योजना";
     const loan = result.scheme_analysis?.eligible_loan ?? 0;
     const emi = result.loan_affordability?.monthly_emi ?? 0;
+    const isNotEligible = result.scheme_analysis?.status === "Not Eligible";
 
     const textToRead =
       lang === "hi"
-        ? `नमस्ते! आपके व्यापार ${result.business} का विश्लेषण पूरा हो चुका है। यह व्यापार शुरू करने के लिए उपयुक्त है। हर महीने लगभग ${mProfit} रुपये की शुद्ध बचत होगी, और साल भर में लगभग ${yProfit} रुपये की कुल बचत बनेगी। आपको ${scheme} के तहत लगभग ${loan} रुपये तक का बैंक लोन मिल सकता है, जिसकी महीने की किश्त लगभग ${emi} रुपये होगी।`
-        : `Hello! Analysis for ${result.business} is complete. This enterprise is feasible. Estimated net monthly profit is ${mProfit} rupees, and annual savings will be around ${yProfit} rupees. You are eligible for up to ${loan} rupees under the ${scheme}, with an estimated monthly EMI of ${emi} rupees.`;
+        ? `नमस्ते! आपके व्यापार ${result.business} का विश्लेषण पूरा हो चुका है। हर महीने लगभग ${mProfit} रुपये की शुद्ध बचत होगी, और साल भर में लगभग ${yProfit} रुपये की कुल बचत बनेगी। ${isNotEligible ? "प्रोजेक्ट लागत ₹50 लाख से अधिक होने के कारण मानक योजना के तहत ऋण उपलब्ध नहीं है।" : `आपको ${scheme} के तहत लगभग ${loan} रुपये तक का बैंक लोन मिल सकता है, जिसकी महीने की किश्त लगभग ${emi} रुपये होगी।`}`
+        : `Hello! Analysis for ${result.business} is complete. Estimated net monthly profit is ${mProfit} rupees, and annual savings will be around ${yProfit} rupees. ${isNotEligible ? "Project cost exceeds ₹50 Lakh scheme limit. Check other financing options." : `You are eligible for up to ${loan} rupees under the ${scheme}, with an estimated monthly EMI of ${emi} rupees.`}`;
 
     const ok = speakText(textToRead, lang === "hi" ? "hi-IN" : "en-IN");
     if (ok) setIsSpeaking(true);

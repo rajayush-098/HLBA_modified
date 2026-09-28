@@ -184,8 +184,8 @@ export default function PageReportCard({ result, lang, formatCurrency }) {
             </tr>
             <tr>
               <td>{isHi ? "ब्याज दर व ग्रेस पीरियड:" : "Interest Rate & Moratorium:"}</td>
-              <td><strong>{scheme.interest_rate || 7.5}% p.a.</strong></td>
-              <td>{afford.moratorium_months || 3} {isHi ? "महीने की छूट अवधि" : "Months moratorium period"}</td>
+              <td><strong>{scheme.interest_rate != null ? `${scheme.interest_rate}% p.a.` : "N/A"}</strong></td>
+              <td>{afford.moratorium_months != null ? `${afford.moratorium_months} ${isHi ? "महीने की छूट अवधि" : "Months moratorium period"}` : "N/A"}</td>
             </tr>
           </tbody>
         </table>

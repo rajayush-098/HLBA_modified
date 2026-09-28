@@ -6,11 +6,12 @@ export default function PageGovtLoan({ result, formatCurrency, lang, onJumpPage 
   const projectCost = scheme.project_cost ?? 0;
   const beneficiaryCont = scheme.beneficiary_contribution ?? 0;
   const eligibleLoan = scheme.eligible_loan ?? 0;
-  const interestRate = scheme.interest_rate ?? (matchedScheme.loan?.interest_rate != null ? matchedScheme.loan.interest_rate : 9);
-  const repaymentPeriod = scheme.repayment_period ?? matchedScheme.loan?.repayment ?? "3 to 7 years";
+  const interestRate = scheme.interest_rate ?? null;
+  const repaymentPeriod = scheme.repayment_period ?? "N/A";
 
-  const schemeName = matchedScheme.scheme_name || scheme.scheme_name || "Government Loan Scheme";
-  const schemeCategory = matchedScheme.category || result.category || "Micro Enterprise Credit";
+  // Central SIH26091 Core Scheme Router is authoritative
+  const schemeName = scheme.scheme_name || "Micro Finance Scheme";
+  const schemeCategory = result.category || matchedScheme.category || "Micro Enterprise Credit";
 
   const applicationSteps =
     Array.isArray(matchedScheme.application_steps) && matchedScheme.application_steps.length > 0
@@ -243,8 +244,8 @@ export default function PageGovtLoan({ result, formatCurrency, lang, onJumpPage 
           <p className="breakdown-label">
             {isHi ? "ब्याज दर व अवधि" : "Interest Rate & Tenure"}
           </p>
-          <h3 className="breakdown-value">{interestRate}% p.a.</h3>
-          <p className="breakdown-sub">{repaymentPeriod}</p>
+          <h3 className="breakdown-value">{interestRate != null ? `${interestRate}% p.a.` : "N/A"}</h3>
+          <p className="breakdown-sub">{repaymentPeriod || (isHi ? "लागू नहीं" : "Not applicable")}</p>
         </div>
       </div>
 

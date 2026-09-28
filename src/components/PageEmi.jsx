@@ -1,40 +1,26 @@
 export default function PageEmi({ result, formatCurrency, lang }) {
   const isHi = lang === "hi";
 
-  const matchedScheme = result.matched_scheme ?? {};
-  // If the matched scheme contains a specific interest_rate (like 5% for PM Vishwakarma), use it. If null, fall back to default of 9%
-  const schemeInterestRate =
-    matchedScheme?.loan?.interest_rate != null ? matchedScheme.loan.interest_rate : 9;
-
+  const schemeAnalysis = result.scheme_analysis ?? {};
   const loanAfford = result.loan_affordability ?? {};
-  const tenureMonths = loanAfford.loan_tenure_months ?? 36;
-  const moratorium = loanAfford.moratorium_months ?? 3;
 
-  // Eligible loan amount
-  const eligibleLoan =
-    result.scheme_analysis?.eligible_loan ??
-    (result.financial_analysis?.initial_investment ? result.financial_analysis.initial_investment * 0.9 : 0);
+  // Consume interest rate, tenure, moratorium, eligible loan, and EMI directly from central router
+  const schemeInterestRate = schemeAnalysis.interest_rate ?? loanAfford.interest_rate ?? null;
+  const tenureMonths = schemeAnalysis.loan_tenure_months ?? loanAfford.loan_tenure_months ?? null;
+  const moratorium = schemeAnalysis.moratorium_months ?? loanAfford.moratorium_months ?? null;
+  const eligibleLoan = schemeAnalysis.eligible_loan ?? 0;
+  const monthlyEmi = loanAfford.monthly_emi ?? 0;
+  const totalInterest = loanAfford.total_interest ?? 0;
+  const isNotEligible = schemeAnalysis.status === "Not Eligible";
 
-  // Dynamic EMI math using schemeInterestRate
-  const repaymentMonths = Math.max(1, tenureMonths - moratorium);
-  const monthlyRate = schemeInterestRate / (12 * 100);
-  const calculatedMonthlyEmi =
-    monthlyRate > 0
-      ? Math.round(
-          (eligibleLoan * monthlyRate * Math.pow(1 + monthlyRate, repaymentMonths)) /
-            (Math.pow(1 + monthlyRate, repaymentMonths) - 1)
-        )
-      : Math.round(eligibleLoan / repaymentMonths);
-
-  const monthlyEmi = calculatedMonthlyEmi || loanAfford.monthly_emi || 0;
-  const totalInterest = Math.max(0, Math.round(monthlyEmi * repaymentMonths - eligibleLoan));
   const emiRatio =
-    result.financial_analysis?.monthly_revenue > 0
+    loanAfford.emi_to_income_ratio ??
+    (result.financial_analysis?.monthly_revenue > 0 && monthlyEmi > 0
       ? Math.round((monthlyEmi / result.financial_analysis.monthly_revenue) * 100)
-      : loanAfford.emi_to_income_ratio ?? 0;
+      : 0);
 
-  const status = emiRatio <= 35 ? "Affordable" : "High Repayment Burden";
-  const isAffordable = status === "Affordable" || emiRatio < 40;
+  const status = isNotEligible ? "Not Eligible" : emiRatio <= 35 ? "Affordable" : "High Repayment Burden";
+  const isAffordable = !isNotEligible && (status === "Affordable" || emiRatio < 40);
   const schedule = loanAfford.quarterly_repayment_schedule ?? [];
 
   return (
@@ -81,7 +67,13 @@ export default function PageEmi({ result, formatCurrency, lang }) {
           <p className="kpi-label">{isHi ? "महीने की किश्त (EMI)" : "Estimated Monthly EMI"}</p>
           <h3 className="kpi-value text-green">{formatCurrency(monthlyEmi)}</h3>
           <p className="kpi-hint">
-            {isHi ? "प्रति माह बैंक में जमा करने योग्य राशि" : "Fixed installment per month"}
+            {eligibleLoan > 0
+              ? isHi
+                ? `पात्र लोन: ${formatCurrency(eligibleLoan)} • प्रति माह किश्त`
+                : `Eligible Loan: ${formatCurrency(eligibleLoan)} • Monthly`
+              : isHi
+              ? "प्रति माह बैंक में जमा करने योग्य राशि"
+              : "Fixed installment per month"}
           </p>
         </div>
 
@@ -90,15 +82,17 @@ export default function PageEmi({ result, formatCurrency, lang }) {
             <span className="kpi-tag">{isHi ? "ब्याज दर" : "Interest Rate"}</span>
           </div>
           <p className="kpi-label">{isHi ? "वार्षिक ब्याज दर" : "Annual Interest Rate"}</p>
-          <h3 className="kpi-value text-blue">{schemeInterestRate}% p.a.</h3>
+          <h3 className="kpi-value text-blue">
+            {schemeInterestRate != null ? `${schemeInterestRate}% p.a.` : "N/A"}
+          </h3>
           <p className="kpi-hint">
-            {matchedScheme?.loan?.interest_rate != null
+            {schemeAnalysis.scheme_name
               ? isHi
-                ? `${matchedScheme.short_name || matchedScheme.scheme_name} की दर`
-                : `Official rate for ${matchedScheme.short_name || matchedScheme.scheme_name}`
+                ? `${schemeAnalysis.scheme_name} (SIH26091)`
+                : `${schemeAnalysis.scheme_name} (SIH26091)`
               : isHi
-              ? "मानक सरकारी दर (डिफ़ॉल्ट 9%)"
-              : "Standard loan benchmark (Default 9%)"}
+              ? "मानक दर"
+              : "Standard rate"}
           </p>
         </div>
 
@@ -119,12 +113,16 @@ export default function PageEmi({ result, formatCurrency, lang }) {
           </div>
           <p className="kpi-label">{isHi ? "लोन चुकाने का समय" : "Total Repayment Tenure"}</p>
           <h3 className="kpi-value">
-            {tenureMonths} {isHi ? "महीने" : "Months"}
+            {tenureMonths != null ? `${tenureMonths} ${isHi ? "महीने" : "Months"}` : "N/A"}
           </h3>
           <p className="kpi-hint">
-            {isHi
-              ? `शुरुआती ${moratorium} महीने ग्रेस/छूट अवधि रहेगी`
-              : `Includes initial ${moratorium} months moratorium`}
+            {moratorium != null
+              ? isHi
+                ? `शुरुआती ${moratorium} महीने ग्रेस/छूट अवधि रहेगी`
+                : `Includes initial ${moratorium} months moratorium`
+              : isHi
+              ? "लागू नहीं"
+              : "Not applicable"}
           </p>
         </div>
       </div>
