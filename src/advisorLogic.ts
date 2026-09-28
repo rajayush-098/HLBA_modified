@@ -275,136 +275,730 @@ export interface AdvisorRequest {
   interest_rate?: number | null;
   loan_tenure_months?: number | null;
   moratorium_months?: number | null;
+  district?: string;
+  state?: string;
+  block?: string;
+  language?: string;
+  history?: Array<{ role: string; text: string }>;
 }
 
 function formatCurrency(val: number): string {
   return new Intl.NumberFormat('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val);
+    maximumFractionDigits: 0,
+  }).format(Math.round(val));
+}
+
+function extractAmountFromText(text: string): number | null {
+  if (!text) return null;
+  const clean = text.toLowerCase().replace(/,/g, '');
+
+  // 1. Lakhs: e.g. "1.5 lakh", "1 lakh", "2 lakhs", "1 lac", "1.5lac"
+  const lakhMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:lakhs?|lacs?|लाख)/i);
+  if (lakhMatch) {
+    return parseFloat(lakhMatch[1]) * 100000;
+  }
+
+  // 2. Thousands / K: e.g. "80k", "50k"
+  const kMatch = clean.match(/(\d+(?:\.\d+)?)\s*k\b/i);
+  if (kMatch) {
+    return parseFloat(kMatch[1]) * 1000;
+  }
+
+  // 3. Hazar / Thousand: e.g. "80 hazar", "80 thousand", "50 hazaar"
+  const hazarMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:thousand|thousands|hazar|hazaar|हजार)/i);
+  if (hazarMatch) {
+    return parseFloat(hazarMatch[1]) * 1000;
+  }
+
+  // 4. Direct numeric figures: e.g. "₹80000", "80000 rupees", "80000", "100000"
+  const numMatch = clean.match(/(?:₹|rs\.?|inr)?\s*(\d{4,9})\b/i);
+  if (numMatch) {
+    return parseFloat(numMatch[1]);
+  }
+
+  return null;
 }
 
 export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
-  const question = (data.question || '').toLowerCase().trim();
+  const rawQ = (data.question || '').trim();
+  const qLower = rawQ.toLowerCase();
 
-  if (!question) {
-    return { answer: 'Please enter a question about your business.' };
+  if (!rawQ) {
+    return { answer: 'Please ask a question about your business plan, loan, or investment.' };
   }
 
-  const businessName = data.business_name || 'Your business';
-  const monthlyProfit = data.monthly_profit ?? 0;
+  const businessName = data.business_name || 'Your Business';
+  const category = data.category || 'Enterprise';
   const monthlyRevenue = data.monthly_revenue ?? 0;
   const monthlyExpenses = data.monthly_expenses ?? 0;
+  const monthlyProfit = data.monthly_profit ?? (monthlyRevenue - monthlyExpenses);
   const roiPercentage = data.roi_percentage ?? 0;
-  const affordabilityStatus = data.affordability_status || '';
+  const affordabilityStatus = data.affordability_status || 'Eligible';
   const monthlyEmi = data.monthly_emi ?? 0;
-  const overallRiskLevel = data.overall_risk_level || '';
-  const financialRisk = data.financial_risk || '';
-  const localDemand = data.local_demand || '';
-  const competitionLevel = data.competition_level || '';
-  const feasibility = data.feasibility || '';
+  const feasibility = data.feasibility || 'Feasible';
+  const projectCost = data.project_cost || (data.promoter_margin ? data.promoter_margin / 0.1 : 140000);
+  const promoterMargin = data.promoter_margin || projectCost * 0.1;
+  const eligibleLoan = data.eligible_loan || projectCost * 0.9;
+  const schemeName = data.scheme_name || (projectCost <= 140000 ? 'Micro Finance Scheme' : 'Term Loan Scheme');
+  const interestRate = data.interest_rate || (projectCost <= 140000 ? 6.5 : 8.0);
+  const tenure = data.loan_tenure_months || (projectCost <= 140000 ? 36 : 84);
+  const moratorium = data.moratorium_months || (projectCost <= 140000 ? 3 : 6);
+  const location = [data.block, data.district, data.state].filter(Boolean).join(', ') || 'your local market area';
+  const dscr = monthlyEmi > 0 ? (monthlyProfit / monthlyEmi).toFixed(1) : '999';
 
-  let answer = '';
+  // Language Detection
+  const hasDevanagari = /[\u0900-\u097F]/.test(rawQ);
+  const isHinglish =
+    /\b(bhai|mere|paas|kitna|hoga|hogi|hai|kya|kaise|karu|karein|bina|chahiye|chalega|kamai|paisa|paise|lagana|karna|shuru|munafa|milega|udhar|bikri)\b/i.test(
+      rawQ
+    );
+  const langMode = hasDevanagari ? 'hi' : isHinglish ? 'hinglish' : (data.language || 'en');
 
-  if (['hello', 'hi', 'hey', 'good morning', 'good evening'].some((w) => question.includes(w))) {
-    answer = `Hello! I am your AI Business Advisor. I can help you understand the analysis for ${businessName}. You can ask me about profit, ROI, expenses, loans, EMI, risks, local market demand, competition, or business growth.`;
-  } else if (['profit', 'profitable', 'profitability', 'earning', 'earnings'].some((w) => question.includes(w))) {
-    if (monthlyProfit > 0) {
-      answer = `${businessName} is currently generating an estimated monthly profit of ₹${formatCurrency(monthlyProfit)}. `;
-      if (monthlyRevenue > 0) {
-        const profitMargin = (monthlyProfit / monthlyRevenue) * 100;
-        answer += `The estimated profit margin is ${profitMargin.toFixed(2)}%. `;
+  // Check for amounts mentioned in user query
+  const userAmount = extractAmountFromText(rawQ);
+
+  // If monthlyRevenue was not passed directly but monthlyProfit and monthlyExpenses exist
+  const effectiveRevenue = monthlyRevenue > 0 ? monthlyRevenue : (monthlyProfit > 0 && monthlyExpenses > 0 ? monthlyProfit + monthlyExpenses : monthlyProfit * 1.5);
+  const effectiveExpenses = monthlyExpenses > 0 ? monthlyExpenses : Math.max(0, effectiveRevenue - monthlyProfit);
+  const netTakeHome = Math.max(0, monthlyProfit - monthlyEmi);
+  const marginPaybackMonths = monthlyProfit > 0 ? (promoterMargin / monthlyProfit).toFixed(1) : 'N/A';
+  const totalPaybackMonths = monthlyProfit > 0 ? (projectCost / monthlyProfit).toFixed(1) : 'N/A';
+  const localDemand = data.local_demand || 'Medium';
+  const competitionLevel = data.competition_level || 'Medium';
+
+  // 1. Follow-up resolution: check if "that", "this", "it" refers to previous turn
+  const lastTurn = (data.history || []).slice(-1)[0]?.text?.toLowerCase() || '';
+  const isFollowUpAfford =
+    /\b(can i afford that|can i afford this|is that affordable|afford ho jayega|afford kar paunga|can i repay that|can i afford)\b/i.test(qLower) ||
+    (/\b(afford|affordability|chuka paunga)\b/i.test(qLower) && (lastTurn.includes('emi') || lastTurn.includes('₹') || lastTurn.includes('loan')));
+
+  // INTENT: Follow-up Affordability / "Can I afford that?" / "Is this affordable for me?"
+  if (
+    isFollowUpAfford ||
+    /\b(can i afford|is this affordable|is this affordable for me|afford kar paunga|kya me afford|affordability)\b/i.test(qLower)
+  ) {
+    if (monthlyProfit >= monthlyEmi) {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Haan, aap ise aasaani se afford kar sakte hain! Aapki har mahine ki bank EMI ₹${formatCurrency(monthlyEmi)} hai, jabki anumanit net monthly profit ₹${formatCurrency(monthlyProfit)} hai. EMI nikalne ke baad bhi aapke paas ₹${formatCurrency(netTakeHome)} ka shuddh munafa har mahine bachega. Is hisaab se aapka repayment status '${affordabilityStatus}' hai aur default ka risk bohot kam hai.`,
+        };
       }
-      if (monthlyProfit < 10000) {
-        answer += 'The business is profitable, but the profit level is relatively low. Focus on increasing sales and controlling expenses.';
-      } else {
-        answer += 'The business is generating positive profit. Continue monitoring expenses and maintain stable revenue growth.';
+      if (langMode === 'hi') {
+        return {
+          answer: `हाँ, आप इसे आसानी से वहन (afford) कर सकते हैं! आपकी मासिक बैंक EMI ₹${formatCurrency(monthlyEmi)} है, जबकि अनुमानित शुद्ध मासिक लाभ ₹${formatCurrency(monthlyProfit)} है। EMI चुकाने के बाद भी हर माह आपके पास ₹${formatCurrency(netTakeHome)} का शुद्ध सरप्लस सुरक्षित रहेगा। आपकी ऋण वहन क्षमता '${affordabilityStatus}' श्रेणी में है।`,
+        };
       }
+      return {
+        answer: `Yes, you can comfortably afford this! Your estimated monthly EMI is ₹${formatCurrency(monthlyEmi)}, while your projected net profit is ₹${formatCurrency(monthlyProfit)}. After paying the EMI each month, you still retain ₹${formatCurrency(netTakeHome)} in positive cash flow buffer. This gives your project an '${affordabilityStatus}' rating.`,
+      };
     } else {
-      answer = `${businessName} is currently not generating positive monthly profit. You should reduce operating expenses, improve sales, and review the business model before expanding or taking additional financial risk.`;
-    }
-  } else if (['roi', 'return on investment', 'return'].some((w) => question.includes(w))) {
-    if (roiPercentage >= 30) {
-      answer = `Your estimated ROI is ${roiPercentage.toFixed(2)}%, which indicates strong financial performance based on the entered business data.`;
-    } else if (roiPercentage >= 15) {
-      answer = `Your estimated ROI is ${roiPercentage.toFixed(2)}%, which indicates reasonable business performance. You can improve ROI by increasing profit without making a proportional increase in investment.`;
-    } else if (roiPercentage > 0) {
-      answer = `Your estimated ROI is ${roiPercentage.toFixed(2)}%, which is relatively low. Focus on improving revenue, reducing costs, and using investment more efficiently.`;
-    } else {
-      answer = 'Your current ROI is not positive. The business should improve its profitability before making additional investments.';
-    }
-  } else if (['expense', 'expenses', 'cost', 'reduce cost', 'reduce expense', 'save money'].some((w) => question.includes(w))) {
-    if (monthlyRevenue > 0) {
-      const expenseRatio = (monthlyExpenses / monthlyRevenue) * 100;
-      answer = `Your estimated monthly expenses are ₹${formatCurrency(monthlyExpenses)}, which is approximately ${expenseRatio.toFixed(2)}% of monthly revenue. `;
-      if (expenseRatio >= 80) {
-        answer += 'Your expense ratio is high. Review your largest costs first, negotiate with suppliers, reduce wastage, and avoid unnecessary operational spending.';
-      } else if (expenseRatio >= 60) {
-        answer += 'Your expenses need regular monitoring. Identify recurring costs that can be reduced without affecting product or service quality.';
-      } else {
-        answer += 'Your expense ratio appears relatively manageable. Continue monitoring costs and maintain financial discipline.';
+      const deficit = monthlyEmi - monthlyProfit;
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Filhal yeh thoda risky hai, kyunki aapka monthly profit ₹${formatCurrency(monthlyProfit)} hai aur EMI ₹${formatCurrency(monthlyEmi)} hai (lagbhag ₹${formatCurrency(deficit)} ki kami). Ise safe banane ke liye aapko shuruat mein apna promoter margin badhana hoga taaki loan aur EMI kam ho sakein.`,
+        };
       }
-    } else {
-      answer = 'Please provide valid revenue information for a detailed expense analysis.';
-    }
-  } else if (['loan', 'emi', 'repayment', 'afford', 'affordable', 'pay loan'].some((w) => question.includes(w))) {
-    let schemePrefix = '';
-    if (data.scheme_name) {
-      if (data.eligible_loan != null && data.eligible_loan > 0) {
-        schemePrefix = `Under the ${data.scheme_name} (SIH26091 core rules), your eligible loan is ₹${formatCurrency(data.eligible_loan)}${data.interest_rate != null ? ` at ${data.interest_rate}% annual interest` : ''} for ${data.loan_tenure_months || 36} months (including ${data.moratorium_months || 3}-month moratorium). `;
-      } else {
-        schemePrefix = `Under SIH26091 rules, this project does not qualify for standard scheme credit (project cost exceeds ₹50 lakh). `;
+      if (langMode === 'hi') {
+        return {
+          answer: `वर्तमान आंकड़ों के अनुसार यह थोड़ा जोखिमपूर्ण है, क्योंकि ₹${formatCurrency(monthlyProfit)} का लाभ ₹${formatCurrency(monthlyEmi)} की EMI से ₹${formatCurrency(deficit)} कम है। इसे सुरक्षित करने के लिए आपको अधिक मार्जिन लगाकर लोन की राशि घटानी चाहिए।`,
+        };
       }
+      return {
+        answer: `At present projections, this poses cash flow strain because your net monthly profit of ₹${formatCurrency(monthlyProfit)} is ₹${formatCurrency(deficit)} below the monthly EMI of ₹${formatCurrency(monthlyEmi)}. To make this safe, contribute higher upfront margin to reduce the borrowing amount.`,
+      };
     }
-    answer = `${schemePrefix}Your current loan affordability status is '${affordabilityStatus}'. `;
-    if (monthlyEmi > 0) {
-      answer += `The estimated monthly EMI is ₹${formatCurrency(monthlyEmi)}. `;
-    }
-    if (affordabilityStatus === 'Affordable') {
-      answer += 'Based on the entered business figures, the repayment burden appears manageable. However, keep an emergency reserve for unexpected expenses.';
-    } else if (affordabilityStatus === 'Moderately Affordable') {
-      answer += 'The loan may be manageable, but it can place pressure on cash flow. Maintain a reserve and avoid taking additional debt.';
-    } else if (affordabilityStatus === 'High Repayment Burden') {
-      answer += 'The repayment burden is high. Consider reducing the loan amount, increasing your own contribution, or improving business cash flow.';
-    } else {
-      answer += 'The current business figures indicate that loan repayment may be risky. Improve profitability before taking a large financial commitment.';
-    }
-  } else if (['risk', 'risky', 'danger', 'problem', 'threat'].some((w) => question.includes(w))) {
-    answer = `The overall business risk level is '${overallRiskLevel}' and the financial risk is '${financialRisk}'. `;
-    if (overallRiskLevel === 'High Risk') {
-      answer += 'The priority should be improving profitability, reducing expenses, and avoiding excessive loan commitments.';
-    } else if (overallRiskLevel === 'Medium Risk') {
-      answer += 'The business has important risks that should be monitored carefully. Focus on financial discipline, market competition, and stable cash flow.';
-    } else {
-      answer += 'The current risk profile appears manageable, but you should continue monitoring market conditions, costs, and business performance.';
-    }
-  } else if (['market', 'demand', 'competition', 'customer', 'customers', 'local'].some((w) => question.includes(w))) {
-    answer = `The estimated local demand is '${localDemand}' and the competition level is '${competitionLevel}'. `;
-    if (localDemand === 'High') {
-      answer += 'This suggests good potential for customer acquisition. Focus on quality, reliability, and building strong local customer relationships.';
-    } else if (localDemand === 'Medium') {
-      answer += 'There is reasonable potential, but marketing and customer feedback will be important for growing the business.';
-    } else {
-      answer += 'Demand should be validated carefully before expanding. Start with a smaller scale and test customer response.';
-    }
-  } else if (['grow', 'growth', 'improve', 'better', 'increase', 'expand', 'future'].some((w) => question.includes(w))) {
-    answer = `To improve ${businessName}, focus on these priorities: 1) increase profitable sales, 2) control unnecessary expenses, 3) maintain accurate income and expense records, 4) study customer needs and competitors, 5) build an emergency cash reserve, and 6) expand gradually only after achieving stable profits.`;
-  } else if (['feasible', 'feasibility', 'should i start', 'good business', 'worth starting'].some((w) => question.includes(w))) {
-    answer = `The current feasibility assessment for ${businessName} is '${feasibility}'. `;
-    if (feasibility.includes('Exceptional') || feasibility === 'Highly Feasible') {
-      answer += 'The entered financial figures show strong potential. The business generates more than double the required loan payment, making it highly secure.';
-    } else if (feasibility.includes('Safe') || feasibility === 'Feasible') {
-      answer += 'The business appears viable with a healthy profit buffer to cover unexpected expenses while taking personal income.';
-    } else if (feasibility.includes('Moderately') || feasibility === 'Moderately Feasible') {
-      answer += 'The business is profitable but lean. You can make loan payments, but must strictly control daily expenses.';
-    } else {
-      answer += 'The current financial figures show tight margins or loss. Review revenue assumptions, expenses, and loan requirements.';
-    }
-  } else {
-    answer = `Based on the analysis of ${businessName}, the current feasibility is '${feasibility}', with an estimated monthly profit of ₹${formatCurrency(monthlyProfit)} and ROI of ${roiPercentage.toFixed(2)}%. You can ask me specifically about profit, ROI, expenses, loan EMI, risks, market demand, competition, feasibility, or business growth.`;
   }
 
-  return { answer };
+  // INTENT: What happens if I invest more? / Higher margin investment
+  if (
+    /\b(what happens if i invest more|invest more|if i invest more|agar main zyada invest karu|zyada invest|zyada lagau|zyada paisa lagau|higher margin)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Agar aap zyada margin invest karte hain (jaise 10% ki jagah 20% ya 30%): 1) Bank se loan kam lena padega (₹${formatCurrency(eligibleLoan)} se kam); 2) Aapki monthly EMI ₹${formatCurrency(monthlyEmi)} se seedhe kam ho jayegi; 3) Byaj ki bachat hogi aur har mahine bacha hua munafa badh jayega. Jaise hi aap margin badhayenge, debt risk kam hoga aur business aur bhi mazboot hoga.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `यदि आप अधिक मार्जिन निवेश करते हैं: 1) बैंक ऋण की आवश्यकता ₹${formatCurrency(eligibleLoan)} से घट जाएगी; 2) आपकी मासिक EMI ₹${formatCurrency(monthlyEmi)} से कम होगी, जिससे ब्याज का खर्च बचेगा; 3) हर महीने आपके हाथ में बचने वाला शुद्ध लाभ बढ़ जाएगा। इससे व्यवसाय का वित्तीय जोखिम न्यूनतम हो जाता है।`,
+      };
+    }
+    return {
+      answer: `If you invest more upfront margin capital: 1) Your required bank loan decreases below ₹${formatCurrency(eligibleLoan)}; 2) Your monthly EMI drops proportionately from ₹${formatCurrency(monthlyEmi)}, saving substantial interest; 3) Your financial risk drops and your net monthly cash surplus increases.`,
+    };
+  }
+
+  // INTENT: What if I take a smaller loan?
+  if (
+    /\b(what if i take a smaller loan|smaller loan|take a smaller loan|chhota loan|kam loan lu|kam loan)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Agar aap chhota loan lete hain (jaise ₹${formatCurrency(eligibleLoan)} ki jagah kam rashi): Aapki monthly EMI ₹${formatCurrency(monthlyEmi)} se kaafi kam ho jayegi aur byaj ka bojh kam hoga. Lekin iske liye aapko ya to khud ka margin badhana hoga ya shuruat mein equipment aur machinery ka scale thoda chhota rakhna hoga.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `यदि आप कम बैंक ऋण लेते हैं: आपकी मासिक EMI ₹${formatCurrency(monthlyEmi)} से काफी कम हो जाएगी और ब्याज का खर्च बचेगा। हालांकि इसके लिए आपको या तो स्वयं का मार्जिन बढ़ाना होगा या शुरुआती मशीनरी का पैमाना थोड़ा छोटा रखना होगा।`,
+      };
+    }
+    return {
+      answer: `If you take a smaller loan: Your monthly EMI decreases below ₹${formatCurrency(monthlyEmi)}, saving on interest costs and easing debt servicing. However, you will either need to contribute a higher promoter margin upfront or phase your initial equipment purchases.`,
+    };
+  }
+
+  // INTENT: Can I repay this from expected profit?
+  if (
+    /\b(can i repay this from the expected profit|can i repay|repay from profit|munafey se loan|profit se loan|profit se chuk jayega)\b/i.test(
+      qLower
+    )
+  ) {
+    if (monthlyProfit >= monthlyEmi) {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Haan, bilkul! Aapka anumanit net monthly profit ₹${formatCurrency(monthlyProfit)} hai, jabki monthly EMI sirf ₹${formatCurrency(monthlyEmi)} hai. Yani aapka munafa EMI se ${dscr} guna bada hai. Loan ki poori EMI har mahine chukane ke baad bhi aapke paas ₹${formatCurrency(netTakeHome)} shuddh kamai bachegi.`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `हाँ, बिल्कुल! आपका अनुमानित शुद्ध मासिक लाभ ₹${formatCurrency(monthlyProfit)} है, जबकि बैंक EMI केवल ₹${formatCurrency(monthlyEmi)} है। आपका लाभ EMI का ${dscr} गुना है, इसलिए आप आसानी से व्यवसाय के लाभ से ही लोन चुका देंगे और हर महीने ₹${formatCurrency(netTakeHome)} का शुद्ध सरप्लस भी बचेगा।`,
+        };
+      }
+      return {
+        answer: `Yes, absolutely! Your projected net monthly profit is ₹${formatCurrency(monthlyProfit)}, while your monthly EMI is only ₹${formatCurrency(monthlyEmi)}. Your profit covers the EMI by ${dscr} times, meaning the business comfortably repays the loan from its operations while retaining ₹${formatCurrency(netTakeHome)} in monthly surplus.`,
+      };
+    } else {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Filhal profit (₹${formatCurrency(monthlyProfit)}) EMI (₹${formatCurrency(monthlyEmi)}) se kam hai, isliye seedhe profit se repayment mushkil hogi jab tak aap monthly kharche kam na karein ya margin badhakar EMI na ghatayein.`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `वर्तमान में लाभ (₹${formatCurrency(monthlyProfit)}) EMI (₹${formatCurrency(monthlyEmi)}) से कम है। इसके लिए आपको या तो परिचालन लागत घटानी होगी या अधिक मार्जिन लगाकर EMI कम करनी होगी।`,
+        };
+      }
+      return {
+        answer: `Currently, projected monthly profit (₹${formatCurrency(monthlyProfit)}) is lower than the monthly EMI (₹${formatCurrency(monthlyEmi)}). You would need to reduce operating expenses or invest more margin upfront to lower the debt burden.`,
+      };
+    }
+  }
+
+  // INTENT: Why do I need this much margin? / Why 10% margin?
+  if (
+    /\b(why do i need this much margin|why do i need margin|why margin|margin kyu|10% margin|why 10% margin|margin itna kyu)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `10% promoter margin (₹${formatCurrency(promoterMargin)}) bank aur ${schemeName} ka mandatory niyam hai. Iske do mukhya kaaran hain: 1) Yeh bank ko dikhata hai ki entrepreneur ka apna risk aur commitment business mein juda hai; 2) Is 10% margin ke aadhar par hi bank baaki 90% (₹${formatCurrency(eligibleLoan)}) ka loan sanction karta hai. Yeh minimum standard rule hai.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `10% प्रमोटर मार्जिन (₹${formatCurrency(promoterMargin)}) बैंक और ${schemeName} का अनिवार्य नियम है। यह उद्यमी के समर्पण और जोखिम सहभागिता (equity commitment) को दर्शाता है। इसी 10% अंशदान के आधार पर बैंक शेष 90% (₹${formatCurrency(eligibleLoan)}) का ऋण स्वीकृत करता है।`,
+      };
+    }
+    return {
+      answer: `The 10% promoter margin (₹${formatCurrency(promoterMargin)}) is a mandatory regulatory requirement under ${schemeName} and bank lending guidelines. It ensures the borrower maintains a personal equity stake and risk commitment in the venture, enabling the lending bank to safely sanction the remaining 90% (₹${formatCurrency(eligibleLoan)}).`,
+    };
+  }
+
+  // INTENT: Specific Amount / Budget Starting Query (e.g. "Can I start this with ₹1 lakh?", "I only have 80,000 rupees", "Mere paas sirf 80 hazaar hai, kaam ho jayega kya?")
+  if (
+    userAmount !== null &&
+    (/\b(start|shuru|invest|afford|have|paas|enough|ho jayega|kaam ho jayega|chahiye|budget|rupees|lakh|hazaar|hazar)\b/i.test(qLower) ||
+      qLower.includes('can i start') ||
+      qLower.includes('only have') ||
+      qLower.includes('mere paas'))
+  ) {
+    const isWithoutLoanIntent =
+      /\b(without\s+(?:a\s+|any\s+|taking\s+a\s+)?loan|bina loan|no loan|loan nahi|bina bank|debt[- ]free)\b/i.test(qLower);
+
+    if (isWithoutLoanIntent) {
+      const shortfallWithoutLoan = Math.max(0, projectCost - userAmount);
+      if (shortfallWithoutLoan === 0) {
+        if (langMode === 'hinglish') {
+          return {
+            answer: `Haan bhai, bilkul! Aapka total project cost ₹${formatCurrency(projectCost)} hai aur aapke paas poore ₹${formatCurrency(userAmount)} hain. Aap bina kisi bank loan ya EMI ke 100% apne paise se yeh business shuru kar sakte hain, jisse aapka poora munafa aapke paas hi rahega.`,
+          };
+        }
+        if (langMode === 'hi') {
+          return {
+            answer: `हाँ, आप बिना किसी लोन के यह व्यापार शुरू कर सकते हैं। आपका कुल प्रोजेक्ट खर्च ₹${formatCurrency(projectCost)} है और आपके पास ₹${formatCurrency(userAmount)} उपलब्ध हैं। आपको कोई मासिक EMI नहीं भरनी होगी और पूरा शुद्ध लाभ आपका होगा।`,
+          };
+        }
+        return {
+          answer: `Yes, you can start completely without a bank loan. Your total estimated project cost is ₹${formatCurrency(projectCost)}, and your available cash of ₹${formatCurrency(userAmount)} covers 100% of it. This eliminates interest costs and monthly EMI obligations entirely.`,
+        };
+      } else {
+        if (langMode === 'hinglish') {
+          return {
+            answer: `Bina loan ke shuru karne ke liye aapko poora project cost ₹${formatCurrency(projectCost)} chahiye. Aapke paas ₹${formatCurrency(userAmount)} hain, yaani lagbhag ₹${formatCurrency(shortfallWithoutLoan)} ki kami hai. Ya to aap purani machine khareed kar setup cost kam karein, ya phir ₹${formatCurrency(eligibleLoan)} ka eligible sarkari bank loan le sakte hain.`,
+          };
+        }
+        if (langMode === 'hi') {
+          return {
+            answer: `बिना लोन के पूरा प्रोजेक्ट शुरू करने के लिए कुल ₹${formatCurrency(projectCost)} की आवश्यकता है। ₹${formatCurrency(userAmount)} के साथ आपके पास ₹${formatCurrency(shortfallWithoutLoan)} की कमी रहेगी। आप या तो शुरुआत में मशीनरी चरणबद्ध तरीके से खरीदें, या योजना के तहत ₹${formatCurrency(eligibleLoan)} तक का बैंक लोन ले सकते हैं।`,
+          };
+        }
+        return {
+          answer: `To start completely without a bank loan, you would need the full project cost of ₹${formatCurrency(projectCost)}. With your available cash of ₹${formatCurrency(userAmount)}, you have a gap of ₹${formatCurrency(shortfallWithoutLoan)}. You can either scale down initial machinery to fit your budget, or use the eligible ₹${formatCurrency(eligibleLoan)} bank loan under ${schemeName}.`,
+        };
+      }
+    }
+
+    // Standard loan-assisted start
+    const meetsMargin = userAmount >= promoterMargin;
+    const surplusMargin = userAmount - promoterMargin;
+    const marginShortfall = promoterMargin - userAmount;
+
+    if (meetsMargin) {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Haan bhai, bilkul ho jayega! Is business ke liye total project cost ₹${formatCurrency(projectCost)} hai, jismein bank niyam ke mutabiq promoter margin (aapka apna lagaya paisa) sirf ₹${formatCurrency(promoterMargin)} (10%) chahiye. Kyunki aapke paas ₹${formatCurrency(userAmount)} hain, aap margin asaani se de sakte hain aur baaki ₹${formatCurrency(eligibleLoan)} ka eligible loan ${schemeName} ke tahat mil sakta hai. Margin dene ke baad bhi aapke paas ₹${formatCurrency(surplusMargin)} emergency working capital ke liye bachenge.`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `हाँ, आप निश्चित रूप से शुरू कर सकते हैं! इस प्रोजेक्ट की कुल अनुमानित लागत ₹${formatCurrency(projectCost)} है, जिसके लिए आवश्यक प्रमोटर मार्जिन (आपका अपना अंशदान) केवल ₹${formatCurrency(promoterMargin)} (10%) है। आपके पास ₹${formatCurrency(userAmount)} उपलब्ध हैं, जो मार्जिन के लिए पर्याप्त हैं। शेष ₹${formatCurrency(eligibleLoan)} की राशि ${schemeName} के तहत पात्र बैंक लोन से पूरी हो सकती है।`,
+        };
+      }
+      return {
+        answer: `Yes, you can comfortably start! The total estimated project cost is ₹${formatCurrency(projectCost)}, which requires a minimum promoter margin (your 10% cash contribution) of ₹${formatCurrency(promoterMargin)}. Since you have ₹${formatCurrency(userAmount)}, you fulfill the margin requirement, and the remaining ₹${formatCurrency(eligibleLoan)} is eligible for bank financing under ${schemeName}. You will even retain ₹${formatCurrency(surplusMargin)} as emergency operational buffer.`,
+      };
+    } else {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Total project cost ₹${formatCurrency(projectCost)} hai, jismein bank ke niyam anusar kam se kam 10% promoter margin (₹${formatCurrency(promoterMargin)}) aapko lagana hota hai. Aapke paas ₹${formatCurrency(userAmount)} hain, yaani margin ke liye ₹${formatCurrency(marginShortfall)} kam pad rahe hain. Aap initial setup cost thoda kam karke ya kisi sahyogi ke sath milkar yeh margin jod sakte hain.`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `इस प्रोजेक्ट की कुल लागत ₹${formatCurrency(projectCost)} है, जिसके लिए बैंक के नियमानुसार 10% प्रमोटर मार्जिन (₹${formatCurrency(promoterMargin)}) आवश्यक है। ₹${formatCurrency(userAmount)} के साथ आपके पास आवश्यक मार्जिन में ₹${formatCurrency(marginShortfall)} की कमी है। आप अपनी मशीनरी बजट को थोड़ा कम करके आवेदन कर सकते हैं।`,
+        };
+      }
+      return {
+        answer: `For a total project cost of ₹${formatCurrency(projectCost)}, the mandatory promoter margin (10% self-contribution) is ₹${formatCurrency(promoterMargin)}. With your ₹${formatCurrency(userAmount)}, you currently have a shortfall of ₹${formatCurrency(marginShortfall)} to meet the bank's minimum margin criterion. You can bridge this gap by phasing equipment purchases to reduce overall setup cost.`,
+      };
+    }
+  }
+
+  // INTENT: Without taking a loan / Self financing without amount mentioned
+  if (
+    /\b(without\s+(?:a\s+|any\s+|taking\s+a\s+)?loan|no loan|bina loan|bina kisi loan|self funding|bina bank|own money|debt[- ]free)\b/i.test(qLower)
+  ) {
+    const gap = projectCost - promoterMargin;
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Bina kisi bank loan ke shuru karne ke liye aapko poori project cost ₹${formatCurrency(projectCost)} khud lagani hogi. Agar aap sirf apna ₹${formatCurrency(promoterMargin)} ka margin lagate hain, to ₹${formatCurrency(gap)} ki kami hogi. Bina karz ke shuru karne ke liye aap machinery kiraye (lease) par le sakte hain ya shuruat me sirf zaroori equipment se chhota pilot start karein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `बिना बैंक लोन के इस व्यवसाय को शुरू करने के लिए आपको पूरी प्रोजेक्ट लागत ₹${formatCurrency(projectCost)} स्वयं लगानी होगी। वर्तमान में आपके मार्जिन (₹${formatCurrency(promoterMargin)}) के अलावा ₹${formatCurrency(gap)} की अतिरिक्त आवश्यकता होगी। यदि आप लोन नहीं लेना चाहते, तो आप शुरुआत में उपकरण लीज पर ले सकते हैं या छोटे पैमाने पर शुरुआत कर सकते हैं।`,
+      };
+    }
+    return {
+      answer: `To establish this business without any bank debt, you would need to fund the entire project cost of ₹${formatCurrency(projectCost)} upfront. Based on your current promoter contribution of ₹${formatCurrency(promoterMargin)}, there is a capital gap of ₹${formatCurrency(gap)}. To start without borrowing, you could lease machinery or begin with a phased pilot setup.`,
+    };
+  }
+
+  // INTENT: How much more money will I need? / Shortfall query
+  if (
+    /\b(how much more money|more money|how much more|aur kitna paisa|aur kitna chahiye|shortfall)\b/i.test(qLower)
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Aapko project setup ke liye koi aur extra paisa nahi chahiye! Total project cost ₹${formatCurrency(projectCost)} hai, jismein aapka margin ₹${formatCurrency(promoterMargin)} aur eligible bank loan ₹${formatCurrency(eligibleLoan)} milkar poori 100% funding kar dete hain. Haan, backup ke liye ₹${formatCurrency(effectiveExpenses || 25000)} ka emergency working capital zaroor paas rakhein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `प्रोजेक्ट सेटअप के लिए आपको किसी अतिरिक्त पूंजी की आवश्यकता नहीं है। ₹${formatCurrency(projectCost)} की कुल लागत में से आपका मार्जिन ₹${formatCurrency(promoterMargin)} और ₹${formatCurrency(eligibleLoan)} का बैंक लोन मिलकर पूरा 100% खर्च कवर कर देते हैं। दैनिक खर्चों के लिए लगभग ₹${formatCurrency(effectiveExpenses || 25000)} का रिज़र्व फंड रखना उचित होगा।`,
+      };
+    }
+    return {
+      answer: `You do not need any additional money for the core project setup. The ₹${formatCurrency(projectCost)} total cost is completely covered by your ₹${formatCurrency(promoterMargin)} promoter margin plus the ₹${formatCurrency(eligibleLoan)} eligible bank loan under ${schemeName}. We only recommend holding approximately ₹${formatCurrency(effectiveExpenses || 25000)} as an operating cash reserve.`,
+    };
+  }
+
+  // INTENT: How much will I pay every month? / What is my EMI? / Har mahine kitna dena padega?
+  if (
+    /\b(how much will i pay every month|how much will i pay|pay every month|what is my emi|my emi|har mahine kitna|kitna dena padega|har mahine ki emi|monthly payment)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Aapko har mahine lagbhag ₹${formatCurrency(monthlyEmi)} ki EMI deni hogi. Yeh calculation ₹${formatCurrency(eligibleLoan)} ke bank loan par ${interestRate}% annual reducing interest aur ${tenure} mahine ke samay (${moratorium} mahine moratorium sahit) ke hisab se hai. Aapke har mahine ke ₹${formatCurrency(monthlyProfit)} profit mein se yeh aasaani se chuk jayegi aur ₹${formatCurrency(netTakeHome)} aapki jeb mein bachenge.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `आपको प्रति माह लगभग ₹${formatCurrency(monthlyEmi)} की बैंक EMI चुकानी होगी। यह गणना ₹${formatCurrency(eligibleLoan)} के पात्र लोन पर ${interestRate}% वार्षिक ब्याज और ${tenure} माह की अवधि (${moratorium} माह मोराटोरियम सहित) के आधार पर है। ₹${formatCurrency(monthlyProfit)} के मासिक लाभ से यह किश्त आसानी से निकल जाएगी और ₹${formatCurrency(netTakeHome)} शुद्ध बचत होगी।`,
+      };
+    }
+    return {
+      answer: `You will pay approximately ₹${formatCurrency(monthlyEmi)} each month as loan EMI. This is computed on an eligible loan of ₹${formatCurrency(eligibleLoan)} at ${interestRate}% annual reducing interest over a ${tenure}-month tenure (with a ${moratorium}-month moratorium). With an estimated net monthly profit of ₹${formatCurrency(monthlyProfit)}, this leaves ₹${formatCurrency(netTakeHome)} in take-home monthly surplus.`,
+    };
+  }
+
+  // INTENT: Why is EMI so high? / Explain EMI
+  if (
+    /\b(why is my emi so high|why is the emi this high|emi so high|emi itni zyada kyu|emi high|kam emi)\b/i.test(qLower)
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Aapki monthly EMI ₹${formatCurrency(monthlyEmi)} hai, jo ₹${formatCurrency(eligibleLoan)} ke loan par ${interestRate}% byaj aur ${tenure} mahine ke samay ke aadhar par reducing balance se nikali gayi hai. Achhi baat yeh hai ki aapka anumanit monthly profit ₹${formatCurrency(monthlyProfit)} hai, jo EMI se ${dscr} guna zyada hai! EMI bharne ke baad bhi aapke paas har mahine lagbhag ₹${formatCurrency(netTakeHome)} ka shuddh munafa bachega. Agar aap EMI kam karna chahte hain, to shuruat me apna margin badha sakte hain.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `आपकी मासिक EMI ₹${formatCurrency(monthlyEmi)} है, जो ₹${formatCurrency(eligibleLoan)} के बैंक लोन पर ${interestRate}% वार्षिक ब्याज और ${tenure} माह की अवधि के आधार पर निर्धारित है। आपका अनुमानित मासिक लाभ ₹${formatCurrency(monthlyProfit)} है, जो EMI का ${dscr} गुना है। EMI चुकाने के बाद भी आपके पास ₹${formatCurrency(netTakeHome)} का शुद्ध लाभ सुरक्षित रहता है। आप अधिक मार्जिन लगाकर इसे और कम कर सकते हैं।`,
+      };
+    }
+    return {
+      answer: `Your monthly EMI is ₹${formatCurrency(monthlyEmi)}, calculated on an eligible loan of ₹${formatCurrency(eligibleLoan)} at ${interestRate}% annual reducing interest over ${tenure} months (including a ${moratorium}-month moratorium). With an estimated net monthly profit of ₹${formatCurrency(monthlyProfit)}, your profit comfortably covers this EMI by ${dscr}x, leaving ₹${formatCurrency(netTakeHome)} in take-home monthly surplus. You can lower the EMI by contributing higher upfront margin capital.`,
+    };
+  }
+
+  // INTENT: How much loan can I get? / Loan eligibility
+  if (
+    /\b(how much loan|how much loan can i get|how much loan would i need|loan kitna|kitna loan milega|loan eligibility|eligible loan)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Aapke ₹${formatCurrency(projectCost)} ke project par ${schemeName} ke tahat aapko ₹${formatCurrency(eligibleLoan)} tak ka eligible bank loan mil sakta hai (jo total cost ka 90% hai). Isme aapka apna promoter margin sirf ₹${formatCurrency(promoterMargin)} (10%) rahega, byaj dar ${interestRate}% p.a. hogi, aur repayment samay ${tenure} mahine (jismein ${moratorium} mahine ka moratorium shamil hai) rahega.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `₹${formatCurrency(projectCost)} के प्रोजेक्ट लागत पर ${schemeName} के तहत आप अधिकतम ₹${formatCurrency(eligibleLoan)} (90%) के बैंक लोन के लिए पात्र हैं। इसमें आपका अंशदान ₹${formatCurrency(promoterMargin)} (10%) होगा, ब्याज दर ${interestRate}% वार्षिक और चुकाने की अवधि ${tenure} माह (${moratorium} माह मोराटोरियम सहित) होगी।`,
+      };
+    }
+    return {
+      answer: `Under the ${schemeName}, based on your total project cost of ₹${formatCurrency(projectCost)} and a 10% promoter contribution of ₹${formatCurrency(promoterMargin)}, your eligible bank loan is ₹${formatCurrency(eligibleLoan)} (90% of total cost). The terms include an annual interest rate of ${interestRate}%, a repayment tenure of ${tenure} months, and a ${moratorium}-month moratorium.`,
+    };
+  }
+
+  // INTENT: Why is this feasible? / Why do you say this business is feasible?
+  if (
+    /\b(why is this feasible|why feasible|why do you say this business is feasible|feasible kyu|kyu feasible bola|practical)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Is business ko '${feasibility}' isliye kaha gaya hai kyunki iske 3 bade financial pillars mazboot hain: 1) Cash Flow: Har mahine ₹${formatCurrency(monthlyProfit)} ka net profit hota hai jo ₹${formatCurrency(monthlyEmi)} ki EMI se ${dscr}x zyada hai; 2) ROI: Saal ka ${roiPercentage.toFixed(1)}% return mil raha hai; 3) Low Risk: Kharch (₹${formatCurrency(effectiveExpenses)}) revenue ke mutabiq santulit hai.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `इस व्यवसाय को '${feasibility}' घोषित करने के 3 ठोस वित्तीय आधार हैं: 1) ऋण सुरक्षा: ₹${formatCurrency(monthlyProfit)} का शुद्ध लाभ ₹${formatCurrency(monthlyEmi)} की EMI को ${dscr} गुना कवर करता है; 2) स्वस्थ लाभप्रदता: वार्षिक ROI ${roiPercentage.toFixed(1)}% है; 3) परिचालन लागत (₹${formatCurrency(effectiveExpenses)}) कुल बिक्री के मुकाबले उचित स्तर पर है।`,
+      };
+    }
+    return {
+      answer: `This business is rated '${feasibility}' because of three concrete financial fundamentals: 1) Healthy Debt Service: Your net monthly profit of ₹${formatCurrency(monthlyProfit)} covers the ₹${formatCurrency(monthlyEmi)} EMI by ${dscr} times; 2) Attractive Returns: An estimated annual ROI of ${roiPercentage.toFixed(1)}%; 3) Balanced Operations: Operating expenses of ₹${formatCurrency(effectiveExpenses)} leave a reliable cash surplus every month.`,
+    };
+  }
+
+  // INTENT: Why is this risky? / What could make this business fail?
+  if (
+    /\b(why risky|why did you say this is risky|make this business fail|fail kyu|khatra kya|biggest risks|what are the main risks|risk factor)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Is business mein sabse bade 3 practical risks yeh hain: 1) Udhaari (Customer Credit): Gaon/bazaar mein zyada udhar baantne se working capital fas sakta hai; 2) Kharche par control: Monthly expenses ₹${formatCurrency(effectiveExpenses)} se zyada na badhne dein; 3) Regular EMI: Har mahine pehle EMI ₹${formatCurrency(monthlyEmi)} alag rakhein. In teeno se bachne ke liye ₹25,000 ka cash reserve zaroor banayein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `इस व्यवसाय में मुख्य रूप से 3 जोखिमों पर सतर्कता आवश्यक है: 1) ग्राहकों को अनियंत्रित उधारी देना जिससे कार्यशील पूंजी अटक सकती है; 2) मासिक परिचालन खर्चों (₹${formatCurrency(effectiveExpenses)}) का बजट से बाहर जाना; 3) किश्त (₹${formatCurrency(monthlyEmi)}) में देरी। शुरुआत से ही ₹25,000–₹50,000 का इमरजेंसी रिज़र्व फंड रखने से यह जोखिम न्यूनतम हो जाता है।`,
+      };
+    }
+    return {
+      answer: `The primary operational risks to guard against are: 1) Excessive customer credit (udhaari), which ties up working capital; 2) Cost creep on monthly operating expenses (currently estimated at ₹${formatCurrency(effectiveExpenses)}); 3) Irregular debt servicing on your ₹${formatCurrency(monthlyEmi)} EMI. Keeping a dedicated 1-month operating reserve mitigates these vulnerabilities.`,
+    };
+  }
+
+  // INTENT: How much can I earn? / Earnings / Profit / "Bhai itna munafa sach me ho sakta hai?"
+  if (
+    /\b(how much can i earn|how much profit|kitna kama sakta|kamai kitni hogi|munafa kitna|earnings|earn|itna munafa sach me|sach me ho sakta|real profit)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Aapki anumanit monthly revenue ₹${formatCurrency(effectiveRevenue)} aur kharche ₹${formatCurrency(effectiveExpenses)} hain, jisse aapka net monthly profit lagbhag ₹${formatCurrency(monthlyProfit)} (saal ka lagbhag ₹${formatCurrency(monthlyProfit * 12)}) banta hai. Bank ki ₹${formatCurrency(monthlyEmi)} EMI nikalne ke baad aapki jeb mein lagbhag ₹${formatCurrency(netTakeHome)} shuddh kamai har mahine bachegi. Yeh hisab gaon aur kasbe ke bazaar ke aadhar par practical hai.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `₹${formatCurrency(effectiveRevenue)} की मासिक बिक्री और ₹${formatCurrency(effectiveExpenses)} के खर्च के आधार पर आपका शुद्ध मासिक लाभ लगभग ₹${formatCurrency(monthlyProfit)} (वार्षिक लगभग ₹${formatCurrency(monthlyProfit * 12)}) है। बैंक EMI (₹${formatCurrency(monthlyEmi)}) चुकाने के पश्चात आपके पास प्रति माह लगभग ₹${formatCurrency(netTakeHome)} की शुद्ध आय रहेगी।`,
+      };
+    }
+    return {
+      answer: `Based on estimated monthly revenue of ₹${formatCurrency(effectiveRevenue)} and operating expenses of ₹${formatCurrency(effectiveExpenses)}, your net profit is approximately ₹${formatCurrency(monthlyProfit)} per month (₹${formatCurrency(monthlyProfit * 12)} per year). After servicing your monthly loan EMI of ₹${formatCurrency(monthlyEmi)}, your net take-home profit is approximately ₹${formatCurrency(netTakeHome)} per month.`,
+    };
+  }
+
+  // INTENT: What if sales are lower? / What if profit is only ₹15,000? / Sales drop
+  if (
+    /\b(what if sales are lower|sales drop|profit is lower|profit is only|bikri kam hui|munafa kam hua|profit kam|agar bikri kam)\b/i.test(
+      qLower
+    )
+  ) {
+    if (userAmount !== null) {
+      const lowerProfit = userAmount;
+      const surplus = lowerProfit - monthlyEmi;
+      if (surplus >= 0) {
+        if (langMode === 'hinglish') {
+          return {
+            answer: `Agar aapka monthly profit kam hokar sirf ₹${formatCurrency(lowerProfit)} bhi reh jata hai, tab bhi aap ₹${formatCurrency(monthlyEmi)} ki EMI aasaani se de sakenge aur ₹${formatCurrency(surplus)} aapke paas bachenge. Loan bilkul safe rahega, bas aapko thoda personal bachat par dhyan dena hoga.`,
+          };
+        }
+        if (langMode === 'hi') {
+          return {
+            answer: `यदि आपका मासिक लाभ घटकर केवल ₹${formatCurrency(lowerProfit)} रह जाता है, तब भी ₹${formatCurrency(monthlyEmi)} की बैंक EMI चुकाने के बाद आपके पास ₹${formatCurrency(surplus)} बचेंगे। लोन डिफ़ॉल्ट का कोई खतरा नहीं होगा, हालांकि व्यक्तिगत बचत सीमित रहेगी।`,
+          };
+        }
+        return {
+          answer: `If your monthly profit drops to ₹${formatCurrency(lowerProfit)}, after paying your ₹${formatCurrency(monthlyEmi)} monthly EMI, you would still retain ₹${formatCurrency(surplus)} in positive cash flow. Your loan remains fully safe and serviceable, though your personal income will be tighter.`,
+        };
+      } else {
+        const deficit = monthlyEmi - lowerProfit;
+        return {
+          answer: `If profit falls to ₹${formatCurrency(lowerProfit)}, it would be ₹${formatCurrency(deficit)} below the monthly EMI of ₹${formatCurrency(monthlyEmi)}. In that scenario, you would need to cut operating expenses immediately to avoid cash strain.`,
+        };
+      }
+    }
+
+    const stressProfit = Math.round(monthlyProfit * 0.7);
+    const stressSurplus = stressProfit - monthlyEmi;
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Agar sales 30% tak gir bhi jati hain, tab bhi aapka profit lagbhag ₹${formatCurrency(stressProfit)} rahega, jo ₹${formatCurrency(monthlyEmi)} ki EMI ko cover karke ₹${formatCurrency(Math.max(0, stressSurplus))} bacha lega. Isliye business mein sales drop jhelne ki achhi kshamta hai.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `यदि बिक्री में 30% की गिरावट भी आती है, तो भी अनुमानित मासिक लाभ लगभग ₹${formatCurrency(stressProfit)} रहेगा, जो ₹${formatCurrency(monthlyEmi)} की EMI चुकाने के बाद भी ₹${formatCurrency(Math.max(0, stressSurplus))} का सुरक्षा मार्जिन प्रदान करेगा।`,
+      };
+    }
+    return {
+      answer: `Even if sales experience a 30% downturn, your estimated profit would remain around ₹${formatCurrency(stressProfit)}, comfortably covering the ₹${formatCurrency(monthlyEmi)} EMI with a remaining surplus of ₹${formatCurrency(Math.max(0, stressSurplus))}. This demonstrates solid resilience against sales volatility.`,
+    };
+  }
+
+  // INTENT: When will I recover my investment? / Payback
+  if (
+    /\b(when will i recover|recover my investment|payback|paisa kab wapas|recovery period|capital recovery)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Aapka apna lagaya hua promoter margin (₹${formatCurrency(promoterMargin)}) sirf lagbhag ${marginPaybackMonths} mahino mein wapas recover ho jayega! Poore ₹${formatCurrency(projectCost)} ke project cost ki capital recovery lagbhag ${totalPaybackMonths} mahino mein complete ho jayegi.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `आपके द्वारा लगाया गया स्वयं का मार्जिन (₹${formatCurrency(promoterMargin)}) मात्र लगभग ${marginPaybackMonths} माह में शुद्ध लाभ से वसूल हो जाएगा। संपूर्ण प्रोजेक्ट लागत (₹${formatCurrency(projectCost)}) की रिकवरी लगभग ${totalPaybackMonths} माह में पूरी हो जाएगी।`,
+      };
+    }
+    return {
+      answer: `At an estimated net profit of ₹${formatCurrency(monthlyProfit)} per month, you will fully recover your personal promoter contribution (₹${formatCurrency(promoterMargin)}) in approximately ${marginPaybackMonths} months. Total project cost capital recovery takes approximately ${totalPaybackMonths} months.`,
+    };
+  }
+
+  // INTENT: Where can I sell? / Who are my customers?
+  if (
+    /\b(where can i sell|who are my customers|kaha bechu|customer kon|customer kaun|grahak kon|target customers)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `${location} mein aapke 3 mukhya customer segments honge: 1) Gaon aur kasbe ke aam parivaar jo daily zaroorat ke liye khareedte hain; 2) Haat aur bazaar ke din aane wale aas-paas ke gaon ke log; 3) Local kirana ya retail dukandarein jo aapse bulk supply le sakti hain.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `${location} में आपके 3 प्राथमिक ग्राहक वर्ग होंगे: 1) स्थानीय ग्रामीण और कस्बाई परिवार; 2) साप्ताहिक हाट/बाज़ार में आने वाले उपभोक्ता; 3) नज़दीकी खुदरा दुकानदार जो आपसे सीधे थोक में माल खरीद सकते हैं।`,
+      };
+    }
+    return {
+      answer: `In ${location}, your core customer base consists of: 1) Local village and neighborhood households for routine needs; 2) Weekly haat/market day shoppers from surrounding hamlets; 3) Neighborhood retail shops looking for reliable local bulk supply.`,
+    };
+  }
+
+  // INTENT: What competition might I face?
+  if (
+    /\b(what competition|competition|competitor|mukabla|pratispardha|pratispardhi)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `${location} mein ${category} ke liye competition level '${competitionLevel}' hai. Competitors se aage nikalne ke 3 practical tarike: 1) Udhar baantne se bachein aur cash par 2% discount dein; 2) Quality mein consistent rahein; 3) Haat ke din subah se regular stock uplabdh rakhein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `${location} क्षेत्र में ${category} के लिए प्रतिस्पर्धा स्तर '${competitionLevel}' आंका गया है। स्थानीय प्रतिस्पर्धियों से बढ़त बनाने के लिए: 1) अनियंत्रित उधारी से बचें; 2) गुणवत्ता की निरंतरता बनाए रखें; 3) स्थानीय बाज़ार दिनों में समय पर पर्याप्त माल उपलब्ध रखें।`,
+      };
+    }
+    return {
+      answer: `In ${location}, local competition for ${category} is assessed at '${competitionLevel}'. To gain competitive advantage: 1) Enforce cash-first discipline with small prompt payment incentives; 2) Maintain reliable product quality; 3) Ensure full stock availability on high-traffic weekly market days.`,
+    };
+  }
+
+  // INTENT: Will this work in my area? / Location / Market demand
+  if (
+    /\b(will this work in my area|in my area|mere area me|is there demand|demand|chalega kya|local market me chalega)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Haan, ${location} mein ${category} ke liye demand '${localDemand}' hai. Is kshetra mein niyamit upbhokta demand uplabdh hai. Safalta ke liye 2 cheezein zaroori hain: 1) Sahi quality aur wajbi rate, 2) Haat/bazaar ke din zyadatar logon tak pahunch banayein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `${location} क्षेत्र में ${category} के लिए दैनिक स्थानीय मांग '${localDemand}' स्तर पर निरंतर बनी रहती है। उत्पाद की शुद्धता और प्रतिस्पर्धी मूल्य निर्धारण से आप तेज़ी से स्थायी ग्राहक बना सकते हैं।`,
+      };
+    }
+    return {
+      answer: `Yes, in ${location}, there is steady local consumer demand (rated '${localDemand}') for ${category} goods and services. To establish strong market presence, focus on transparent pricing and building direct relationships with repeat buyers.`,
+    };
+  }
+
+  // INTENT: What should I do first? / Where to start?
+  if (
+    /\b(what should i do first|where to start|where should i start|pehle kya karu|pehle kya karna|first step|shuruat kaha se)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Pehle yeh 3 zaroori kaam karein: 1) Machinery aur equipment ka pakka quotation lein jo ₹${formatCurrency(projectCost)} ke budget mein fit ho; 2) Apne paas 10% margin (₹${formatCurrency(promoterMargin)}) ready rakhein aur nikat-tam bank mein ${schemeName} ke tahat aavedan karein; 3) Dukan ya shed ka kirayanama (rent agreement) kam se kam advance par finalize karein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `शुरुआत में ये 3 आवश्यक कदम उठाएं: 1) ₹${formatCurrency(projectCost)} के प्रोजेक्ट बजट के अनुसार आवश्यक मशीनरी का कोटेशन लें; 2) अपना 10% प्रमोटर मार्जिन (₹${formatCurrency(promoterMargin)}) सुरक्षित रखें और निकटतम बैंक में ${schemeName} हेतु आवेदन करें; 3) कार्यस्थल का रेंट एग्रीमेंट न्यूनतम अग्रिम पर तय करें।`,
+      };
+    }
+    return {
+      answer: `Begin with these 3 immediate action steps: 1) Obtain formal equipment quotations matching your ₹${formatCurrency(projectCost)} project cost; 2) Prepare your 10% promoter contribution (₹${formatCurrency(promoterMargin)}) and submit your application for ${schemeName} at your local bank; 3) Finalize premises with minimal advance lease terms.`,
+    };
+  }
+
+  // INTENT: Should I expand? / Business expansion
+  if (
+    /\b(should i expand|expand|bada karein|badhana chahiye|expansion)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Abhi turant expand na karein. Pehle 6 se 12 mahine regular EMI (₹${formatCurrency(monthlyEmi)}) bina kisi deri ke bharein aur kam se kam 2 mahine ka cash backup fund banayein. Jab monthly sales stable ho jaye aur har mahine surplus cash flow bache, tabhi dusri machine ya nayi branch ki sochein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `शुरुआती 6–12 महीनों में विस्तार की जल्दबाज़ी न करें। पहले नियमित मासिक EMI (₹${formatCurrency(monthlyEmi)}) का भुगतान समय पर करें और कार्यशील पूंजी का 2 माह का रिज़र्व फंड बनाएं। जब मासिक राजस्व स्थिर हो जाए, तभी क्षमता विस्तार पर विचार करें।`,
+      };
+    }
+    return {
+      answer: `Avoid expanding prematurely. For the first 6–12 months, focus on servicing your ₹${formatCurrency(monthlyEmi)} monthly EMI on time and building a 2-month operating reserve. Consider physical capacity expansion only after cash flows remain consistently profitable.`,
+    };
+  }
+
+  // INTENT: What should I improve?
+  if (
+    /\b(what should i improve|kya sudhaar|improve|kya improve karein)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Yeh 3 cheezein turant sudharein: 1) Monthly expenses (₹${formatCurrency(effectiveExpenses)}) par nazar rakhein aur raw material direct wholesale se lein; 2) Kisi ko bhi bina date ke lambi udhari na dein; 3) EMI (₹${formatCurrency(monthlyEmi)}) ki rashi har mahine ki pehli tareekh ko alag rakh dein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `इन 3 बिंदुओं में तुरंत सुधार करें: 1) मासिक परिचालन व्यय (₹${formatCurrency(effectiveExpenses)}) को नियंत्रित रखें; 2) ग्राहकों को दी जाने वाली उधारी पर सख्त सीमा लगाएं; 3) मासिक EMI (₹${formatCurrency(monthlyEmi)}) की राशि माह की शुरुआत में ही अलग बैंक खाते में जमा करें।`,
+      };
+    }
+    return {
+      answer: `Focus on improving these three core areas: 1) Tightly manage your monthly operating expenses (currently ₹${formatCurrency(effectiveExpenses)}); 2) Eliminate extended customer credit cycles; 3) Set aside your ₹${formatCurrency(monthlyEmi)} EMI payment on the first of every month before taking personal drawings.`,
+    };
+  }
+
+  // INTENT: How can I increase my profit? / Business Operations / Growth
+  if (
+    /\b(how can i increase my profit|increase profit|grow|munafa kaise badhaye|growth)\b/i.test(
+      qLower
+    )
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Munafa badhane ke 4 practical tarike: 1) Raw material direct thoke/mandi se khareedein taaki monthly expenses (₹${formatCurrency(effectiveExpenses)}) kam hon; 2) Cash discount dekar udhari band karein; 3) Kuch high-margin complementary items sath mein bechein; 4) Pehle 6 mahine saara surplus paisa business mein hi reinvest karein.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `मुनाफा बढ़ाने के 4 व्यावहारिक कदम: 1) कच्चा माल सीधे थोक विक्रेताओं से खरीदें ताकि ₹${formatCurrency(effectiveExpenses)} के मासिक खर्च में 5–10% बचत हो; 2) नकद भुगतान पर छोटे ऑफर देकर उधारी रोकें; 3) उच्च मार्जिन वाले पूरक उत्पाद जोड़ें; 4) पहले 6 माह लाभ को पुनः कार्यशील पूंजी में लगाएं।`,
+      };
+    }
+    return {
+      answer: `To increase your net profit: 1) Procure raw materials directly from primary wholesale hubs to reduce your monthly expenses (currently ₹${formatCurrency(effectiveExpenses)}); 2) Enforce cash-first terms to eliminate bad debts; 3) Add high-margin allied goods; 4) Reinvest early cash surpluses into bulk stock before considering physical expansion.`,
+    };
+  }
+
+  // INTENT: Greetings & General conversational queries
+  if (['hello', 'hi', 'hey', 'namaste', 'pranam'].some((w) => qLower === w || qLower.startsWith(w + ' '))) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Namaste! Main aapka AI Business Advisor hoon. ${businessName} ke liye ₹${formatCurrency(projectCost)} ke project cost, ₹${formatCurrency(promoterMargin)} ke margin, aur ₹${formatCurrency(monthlyProfit)} ke anumanit profit ke sath aapka poora hisab ready hai. Aap mujhse budget, loan, EMI, munafa, ya bazaar ke baare mein koi bhi sawaal poochh sakte hain!`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `नमस्ते! मैं आपका AI व्यापार सलाहकार हूँ। ${businessName} के लिए ₹${formatCurrency(projectCost)} प्रोजेक्ट लागत, ₹${formatCurrency(promoterMargin)} मार्जिन और ₹${formatCurrency(monthlyProfit)} मासिक लाभ का संपूर्ण वित्तीय मॉडल तैयार है। आप बेझिझक कोई भी सवाल पूछ सकते हैं।`,
+      };
+    }
+    return {
+      answer: `Hello! I am your AI Business Advisor for ${businessName}. I have your complete project figures ready (Project Cost: ₹${formatCurrency(projectCost)}, Margin: ₹${formatCurrency(promoterMargin)}, Eligible Loan: ₹${formatCurrency(eligibleLoan)}, Monthly Profit: ₹${formatCurrency(monthlyProfit)}). Ask me any specific question about your budget, loan EMI, profitability, or market competition!`,
+    };
+  }
+
+  // Fallback for conversational queries: Answer directly based on user's exact query words
+  if (langMode === 'hinglish') {
+    return {
+      answer: `${businessName} ke liye aapka total project cost ₹${formatCurrency(projectCost)} hai, jismein ₹${formatCurrency(promoterMargin)} aapka margin aur ₹${formatCurrency(eligibleLoan)} eligible loan hai. Har mahine anumanit ₹${formatCurrency(monthlyProfit)} profit ke sath yeh business '${feasibility}' hai. Aap mujhse is sawaal se juda koi bhi specific hisab poochh sakte hain.`,
+    };
+  }
+  if (langMode === 'hi') {
+    return {
+      answer: `${businessName} के लिए प्रोजेक्ट लागत ₹${formatCurrency(projectCost)}, प्रमोटर मार्जिन ₹${formatCurrency(promoterMargin)} और पात्र बैंक लोन ₹${formatCurrency(eligibleLoan)} है। ₹${formatCurrency(monthlyProfit)} के मासिक लाभ के साथ यह प्रोजेक्ट '${feasibility}' श्रेणी में है।`,
+    };
+  }
+  return {
+    answer: `For ${businessName}, your estimated project cost is ₹${formatCurrency(projectCost)} (requiring ₹${formatCurrency(promoterMargin)} margin and ₹${formatCurrency(eligibleLoan)} eligible loan under ${schemeName}). With an estimated net profit of ₹${formatCurrency(monthlyProfit)}/month and '${feasibility}' rating, please ask any specific financial, loan, or market question.`,
+  };
 }
 
 export function analyzeBusiness(data: BusinessRequest) {

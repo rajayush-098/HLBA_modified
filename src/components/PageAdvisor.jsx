@@ -35,22 +35,32 @@ export default function PageAdvisor({ result, lang = "hi", formatCurrency, busin
   const chatBottomRef = useRef(null);
   const msgCounterRef = useRef(1);
 
-  // Use businessContext fallback if not passed directly
-  const ctx = businessContext || {
-    businessType: result?.category || "",
-    businessName: result?.business || result?.business_name || (lang === "hi" ? "आपका व्यवसाय" : "Your Business"),
-    district: result?.district || (lang === "hi" ? "स्थानीय क्षेत्र" : "Local Area"),
-    state: result?.state || "",
-    block: result?.block || "",
-    totalInvestment: result?.financial_analysis?.initial_investment ?? null,
-    promoterMargin: result?.scheme_analysis?.margin_capital ?? result?.scheme_analysis?.beneficiary_contribution ?? null,
-    eligibleLoan: result?.scheme_analysis?.eligible_loan ?? null,
-    matchedScheme: result?.scheme_analysis?.scheme_name || (lang === "hi" ? "क्रेडिट लिंक्ड योजना" : "Credit Scheme"),
-    interestRate: result?.scheme_analysis?.interest_rate || null,
-    monthlyEmi: result?.loan_affordability?.monthly_emi ?? null,
-    totalProjectCost: result?.scheme_analysis?.project_cost ?? result?.financial_analysis?.initial_investment ?? null,
-    monthlyProfit: result?.financial_analysis?.monthly_profit ?? null,
-    feasibility: result?.feasibilityVerdict || result?.feasibility || "Feasible",
+  // Use robust merged businessContext fallback
+  const rawCtx = businessContext || {};
+  const ctx = {
+    businessType: rawCtx.businessType || rawCtx.category || result?.category || "",
+    businessName: rawCtx.businessName || rawCtx.business || rawCtx.business_name || result?.business || result?.business_name || (lang === "hi" ? "आपका व्यवसाय" : "Your Business"),
+    district: rawCtx.district || result?.district || (lang === "hi" ? "स्थानीय क्षेत्र" : "Local Area"),
+    state: rawCtx.state || result?.state || "",
+    block: rawCtx.block || result?.block || "",
+    totalInvestment: rawCtx.totalInvestment ?? rawCtx.investment ?? result?.financial_analysis?.initial_investment ?? null,
+    promoterMargin: rawCtx.promoterMargin ?? rawCtx.promoter_margin ?? rawCtx.margin_capital ?? result?.scheme_analysis?.margin_capital ?? result?.scheme_analysis?.beneficiary_contribution ?? null,
+    eligibleLoan: rawCtx.eligibleLoan ?? rawCtx.eligible_loan ?? result?.scheme_analysis?.eligible_loan ?? null,
+    matchedScheme: rawCtx.matchedScheme ?? rawCtx.scheme_name ?? result?.scheme_analysis?.scheme_name ?? (lang === "hi" ? "क्रेडिट लिंक्ड योजना" : "Credit Scheme"),
+    interestRate: rawCtx.interestRate ?? rawCtx.interest_rate ?? result?.scheme_analysis?.interest_rate ?? null,
+    loanTenureMonths: rawCtx.loanTenureMonths ?? rawCtx.loan_tenure_months ?? result?.scheme_analysis?.loan_tenure_months ?? result?.loan_affordability?.loan_tenure_months ?? null,
+    moratoriumMonths: rawCtx.moratoriumMonths ?? rawCtx.moratorium_months ?? result?.scheme_analysis?.moratorium_months ?? result?.loan_affordability?.moratorium_months ?? null,
+    monthlyEmi: rawCtx.monthlyEmi ?? rawCtx.monthly_emi ?? result?.loan_affordability?.monthly_emi ?? null,
+    totalProjectCost: rawCtx.totalProjectCost ?? rawCtx.project_cost ?? rawCtx.projectCost ?? result?.scheme_analysis?.project_cost ?? result?.financial_analysis?.initial_investment ?? null,
+    monthlyRevenue: rawCtx.monthlyRevenue ?? rawCtx.monthly_revenue ?? result?.financial_analysis?.monthly_revenue ?? null,
+    monthlyExpenses: rawCtx.monthlyExpenses ?? rawCtx.monthly_expenses ?? result?.financial_analysis?.monthly_expenses ?? null,
+    monthlyProfit: rawCtx.monthlyProfit ?? rawCtx.monthly_profit ?? result?.financial_analysis?.monthly_profit ?? null,
+    roiPercentage: rawCtx.roiPercentage ?? rawCtx.roi_percentage ?? result?.financial_analysis?.roi_percentage ?? null,
+    feasibility: rawCtx.feasibility || result?.feasibilityVerdict || result?.feasibility || "Feasible",
+    affordabilityStatus: rawCtx.affordabilityStatus || result?.loan_affordability?.affordability_status || "Eligible",
+    localDemand: rawCtx.localDemand || result?.hyper_local_profile?.local_demand || "Medium",
+    competitionLevel: rawCtx.competitionLevel || result?.risk_analysis?.competition_level || "Medium",
+    localMarketData: rawCtx.localMarketData || result?.hyper_local_profile?.market_reach || null,
   };
 
   const getInitialGreeting = () => {
@@ -491,6 +501,15 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
 
     let finalReply;
 
+    // Extract conversation history for multi-turn conversational reasoning
+    const conversationHistory = messages
+      .filter((m) => !m.isLoading && m.text && m.text.trim())
+      .slice(-8)
+      .map((m) => ({
+        role: m.sender === "user" ? "user" : "model",
+        text: m.text.trim(),
+      }));
+
     try {
       const activeLanguage = languageNames[lang] || lang || "Hindi";
       const bName = ctx.businessName || result?.business || (isHi ? "व्यवसाय" : "Enterprise");
@@ -541,6 +560,7 @@ When advising the user, actively use the real-time market data. If they ask abou
         },
         language: lang,
         selectedLanguage: activeLanguage,
+        history: conversationHistory,
       };
 
       // Real Gemini API call to the backend proxy with timeout handling
@@ -603,6 +623,8 @@ When advising the user, actively use the real-time market data. If they ask abou
           local_demand: ctx.localDemand,
           competition_level: ctx.competitionLevel,
           feasibility: ctx.feasibility,
+          language: lang,
+          history: conversationHistory,
         });
 
         const locationLabel = [ctx.district, ctx.state].filter(Boolean).join(", ") || (isHi ? "स्थानीय क्षेत्र" : "Local Area");

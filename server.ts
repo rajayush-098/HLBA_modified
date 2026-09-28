@@ -403,57 +403,177 @@ STRICT CONSTRAINTS:
       const bDistrict = businessContext.district || "Local Area";
       const bState = businessContext.state || "";
       const bScheme = businessContext.matchedScheme || "Government Credit Scheme";
-      const bMargin =
-        businessContext.promoterMargin != null
-          ? `₹${Number(businessContext.promoterMargin).toLocaleString("en-IN")}`
+      const bProjectCost =
+        businessContext.totalProjectCost ??
+        businessContext.project_cost ??
+        businessContext.projectCost ??
+        (businessContext.promoterMargin != null ? Number(businessContext.promoterMargin) / 0.1 : undefined);
+
+      const bMarginVal =
+        businessContext.promoterMargin ??
+        businessContext.promoter_margin ??
+        businessContext.margin_capital ??
+        businessContext.investment ??
+        (bProjectCost != null ? Number(bProjectCost) * 0.1 : undefined);
+
+      const bLoanVal =
+        businessContext.eligibleLoan ??
+        businessContext.eligible_loan ??
+        (bProjectCost != null && bMarginVal != null ? Number(bProjectCost) - Number(bMarginVal) : undefined);
+
+      const bEmiVal =
+        businessContext.monthlyEmi ??
+        businessContext.monthly_emi ??
+        undefined;
+
+      const bInterestRate =
+        businessContext.interestRate ??
+        businessContext.loanInterestRate ??
+        businessContext.interest_rate ??
+        undefined;
+
+      const bTenureMonths =
+        businessContext.loanTenureMonths ??
+        businessContext.loanTenure ??
+        businessContext.tenure_months ??
+        undefined;
+
+      const bMoratoriumMonths =
+        businessContext.moratoriumMonths ??
+        businessContext.moratorium_months ??
+        undefined;
+
+      const bRevenue =
+        businessContext.monthlyRevenue ??
+        businessContext.monthly_revenue ??
+        undefined;
+
+      const bExpenses =
+        businessContext.monthlyExpenses ??
+        businessContext.monthly_expenses ??
+        undefined;
+
+      const bProfit =
+        businessContext.monthlyProfit ??
+        businessContext.monthly_profit ??
+        undefined;
+
+      const bRoi =
+        businessContext.roiPercentage ??
+        businessContext.roi_percentage ??
+        undefined;
+
+      const bAffordability =
+        businessContext.affordabilityStatus ??
+        businessContext.affordability_status ??
+        "Eligible";
+
+      const bFeasibility =
+        businessContext.feasibilityVerdict ||
+        businessContext.feasibility ||
+        "Feasible";
+
+      const bMarginStr =
+        bMarginVal != null
+          ? `₹${Number(bMarginVal).toLocaleString("en-IN")}`
           : "Not specified";
-      const bLoan =
-        businessContext.eligibleLoan != null
-          ? `₹${Number(businessContext.eligibleLoan).toLocaleString("en-IN")}`
+      const bLoanStr =
+        bLoanVal != null
+          ? `₹${Number(bLoanVal).toLocaleString("en-IN")}`
           : "Not specified";
-      const bEmi =
-        businessContext.monthlyEmi != null
-          ? `₹${Number(businessContext.monthlyEmi).toLocaleString("en-IN")}`
+      const bEmiStr =
+        bEmiVal != null
+          ? `₹${Number(bEmiVal).toLocaleString("en-IN")}`
+          : "Not specified";
+      const bProjectCostStr =
+        bProjectCost != null
+          ? `₹${Number(bProjectCost).toLocaleString("en-IN")}`
+          : "Not specified";
+      const bProfitStr =
+        bProfit != null
+          ? `₹${Number(bProfit).toLocaleString("en-IN")}`
           : "Not specified";
 
       const localMarketStr =
         businessContext.localMarketContext ||
         "Local Market Context: Live field scan data pending or not supplied.";
 
-      const profileHeader = `Profile: ${bName}, ${bDistrict}${bState ? `, ${bState}` : ""}\nScreened Scheme: ${bScheme}\nMargin: ${bMargin} | Screened Loan: ${bLoan} | EMI: ${bEmi}\n${localMarketStr}`;
+      const profileHeader = `PROFILE:
+Business: ${bName} (${businessContext.businessType || "Enterprise"})
+Location: ${bDistrict}${bState ? `, ${bState}` : ""} (Block: ${businessContext.block || bDistrict})
+Total Project Cost: ${bProjectCostStr}
+Promoter Margin (10%): ${bMarginStr}
+Eligible Bank Loan (90%): ${bLoanStr}
+Screened Scheme: ${bScheme} (Interest: ${bInterestRate || 6.5}%, Tenure: ${bTenureMonths || 36} months, Moratorium: ${bMoratoriumMonths || 3} months)
+Monthly Loan EMI: ${bEmiStr}
+Monthly Revenue: ${bRevenue != null ? `₹${Number(bRevenue).toLocaleString("en-IN")}` : "Estimated"}
+Monthly Expenses: ${bExpenses != null ? `₹${Number(bExpenses).toLocaleString("en-IN")}` : "Estimated"}
+Net Monthly Profit: ${bProfitStr}
+Annual ROI: ${bRoi != null ? `${bRoi}%` : "Estimated"}
+Feasibility: ${bFeasibility} | Affordability: ${bAffordability}
+${localMarketStr}`;
 
       const serializedContext =
         typeof businessContext === "string"
           ? businessContext
-          : `${profileHeader}\n\n${JSON.stringify(businessContext, null, 2)}`;
+          : `${profileHeader}\n\nAdditional Raw Parameters:\n${JSON.stringify(businessContext, null, 2)}`;
 
-      const systemInstruction = `You are SAHYOGI, a practical rural business mentor in India.
-You are advising an entrepreneur on the following business profile:
+      const systemInstruction = `You are SAHYOGI (सहयोगी), an intelligent, practical, and highly empathetic rural business advisor and mentor in India.
+You are advising an entrepreneur on this exact business profile:
 
-${serializedContext}
+${profileHeader}
 
-Guidelines:
-- Reference their actual numbers where provided. If figures are not provided, do not fabricate them.
-- If real-time map data is present, incorporate it realistically. If map data was unavailable, acknowledge it honestly.
-- Remind the user that government scheme eligibility is an indicative screening, and official loan sanction requires lender appraisal.
-- Provide step-by-step, actionable guidance in: ${selectedLanguage}.`;
+CORE REASONING FLOW FOR EVERY USER QUESTION:
+1. Understand the user's intent: Identify precisely what they are asking about (Budget / Starting capital / Without loan / Loan eligibility / Monthly EMI / Affordability / Sales drop stress test / Profit & Earnings / Payback period / Customers & Market / Competition / Operations & Growth / Conversational follow-up).
+2. Ground in the existing business data: Always use the exact figures from the profile above (Total Project Cost: ${bProjectCostStr}, Margin: ${bMarginStr}, Loan: ${bLoanStr}, EMI: ${bEmiStr}, Profit: ${bProfitStr}, Scheme: ${bScheme}). DO NOT ask the user for data that is already available here!
+3. Perform exact calculations if required:
+   - Specific amount (e.g. "Can I start with ₹1 lakh?", "I only have 80,000 rupees", "Mere paas sirf 80 hazaar hai"): Extract that number. Compare it with the required 10% promoter margin (${bMarginStr}) and the total project cost (${bProjectCostStr}). State clearly if it meets or falls short of the margin, and what bank loan (${bLoanStr}) covers the rest.
+   - Sales drop / Lower profit (e.g. "What if sales drop?", "What if profit is only ₹15,000?"): Calculate if the profit covers the monthly EMI of ${bEmiStr} and compute the remaining take-home buffer or deficit.
+   - Payback period ("When will I recover my investment?"): Calculate promoter margin payback months = Promoter Margin / Net Monthly Profit.
+   - Without a loan ("Can I do this without a loan?"): Compare their funds with the full project cost (${bProjectCostStr}) and explain the capital gap or how to start debt-free (leasing equipment or phased pilot).
+   - Higher margin ("What happens if I invest more?"): Explain how increasing margin lowers the loan requirement below ${bLoanStr} and reduces the monthly EMI from ${bEmiStr}.
+   - Margin requirement ("Why do I need this much margin?"): Explain that 10% promoter contribution is a mandatory bank/scheme equity rule that unlocks the 90% loan.
+4. Answer the exact question first: Give a direct, specific answer in the first sentence. DO NOT automatically return generic summaries of profit, ROI, or feasibility if the user asked a specific question.
+5. Provide 1 to 3 practical reasons, calculations, or steps to back it up.
+6. Understand conversational follow-ups: If the user says "Can I afford that?", "Can I repay that?", or "Why?", understand that "that" refers to the previously discussed EMI (${bEmiStr}) or loan figure.
+7. Language and Tone:
+   - Respond naturally in: ${selectedLanguage}.
+   - If user asks in Hinglish, respond in natural, friendly Hinglish.
+   - If user asks in Hindi, respond in clear, respectful Hindi.
+   - Keep answers concise, direct, and conversational — avoid robotic bullet dumps or lengthy disclaimers (this is spoken in Voice Mode).`;
+
+      // Helper to generate deterministic fallback when Gemini is unavailable
+      const runFallback = () =>
+        handleAdvisor({
+          question: message,
+          business_name: bName,
+          category: businessContext.businessType || businessContext.category,
+          monthly_revenue: bRevenue,
+          monthly_expenses: bExpenses,
+          monthly_profit: bProfit,
+          roi_percentage: bRoi,
+          affordability_status: bAffordability,
+          monthly_emi: bEmiVal,
+          eligible_loan: bLoanVal,
+          project_cost: bProjectCost,
+          promoter_margin: bMarginVal,
+          scheme_name: bScheme,
+          interest_rate: bInterestRate,
+          loan_tenure_months: bTenureMonths,
+          moratorium_months: bMoratoriumMonths,
+          local_demand: businessContext.localDemand,
+          competition_level: businessContext.competitionLevel,
+          feasibility: bFeasibility,
+          district: bDistrict,
+          state: bState,
+          block: businessContext.block,
+          language: selectedLanguage,
+          history: req.body?.history,
+        });
 
       const geminiClient = getGeminiClient();
       if (!geminiClient) {
-        const fallback = handleAdvisor({
-          question: message,
-          business_name: bName,
-          category: businessContext.businessType,
-          monthly_revenue: businessContext.monthlyRevenue,
-          monthly_expenses: businessContext.monthlyExpenses,
-          monthly_profit: businessContext.monthlyProfit,
-          roi_percentage: businessContext.roiPercentage,
-          affordability_status: businessContext.affordabilityStatus,
-          monthly_emi: businessContext.monthlyEmi,
-          local_demand: businessContext.localDemand,
-          competition_level: businessContext.competitionLevel,
-          feasibility: businessContext.feasibility,
-        });
+        const fallback = runFallback();
         res.json({
           reply: fallback.answer,
           answer: fallback.answer,
@@ -463,15 +583,33 @@ Guidelines:
         return;
       }
 
+      // Build multi-turn conversational contents for Gemini
+      const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+      const geminiContents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
+
+      for (const item of rawHistory) {
+        if (item && item.text && typeof item.text === "string") {
+          const role = item.role === "assistant" || item.role === "model" ? "model" : "user";
+          geminiContents.push({
+            role,
+            parts: [{ text: item.text.trim() }],
+          });
+        }
+      }
+      geminiContents.push({
+        role: "user",
+        parts: [{ text: message }],
+      });
+
       // Non-streaming response
       let answerText = "";
       try {
         const response = await geminiClient.models.generateContent({
           model: "gemini-3.8-flash",
-          contents: message,
+          contents: geminiContents as any,
           config: {
             systemInstruction,
-            temperature: 0.7,
+            temperature: 0.6,
           },
         });
         answerText = response.text ? response.text.trim() : "";
@@ -480,10 +618,10 @@ Guidelines:
         try {
           const fallbackAi = await geminiClient.models.generateContent({
             model: "gemini-flash-latest",
-            contents: message,
+            contents: geminiContents as any,
             config: {
               systemInstruction,
-              temperature: 0.7,
+              temperature: 0.6,
             },
           });
           answerText = fallbackAi.text ? fallbackAi.text.trim() : "";
@@ -503,18 +641,7 @@ Guidelines:
       }
 
       // Deterministic rule-based mentor fallback
-      const fallback = handleAdvisor({
-        question: message,
-        business_name: bName,
-        category: businessContext.businessType,
-        monthly_revenue: businessContext.monthlyRevenue,
-        monthly_expenses: businessContext.monthlyExpenses,
-        monthly_profit: businessContext.monthlyProfit,
-        monthly_emi: businessContext.monthlyEmi,
-        local_demand: businessContext.localDemand,
-        competition_level: businessContext.competitionLevel,
-        feasibility: businessContext.feasibility,
-      });
+      const fallback = runFallback();
       res.json({
         answer: fallback.answer,
         reply: fallback.answer,
