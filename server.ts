@@ -82,36 +82,50 @@ function getGeminiClient(): GoogleGenAI | null {
 
 // Pre-index blocks data by district lowercase name for fast pan-India lookups
 const panIndiaBlocksMap: Record<string, string[]> = {};
+
 if (Array.isArray(rawBlocksData)) {
   rawBlocksData.forEach((districtObj: any) => {
     if (districtObj && districtObj.name) {
       const key = districtObj.name.toLowerCase().trim();
+
       const blocks = Array.isArray(districtObj.blockList)
         ? districtObj.blockList.map((b: any) => {
             const name = typeof b === "string" ? b : (b.name || "");
+
             return name
               .toLowerCase()
               .split(" ")
-              .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+              .map(
+                (word: string) =>
+                  word.charAt(0).toUpperCase() + word.slice(1)
+              )
               .join(" ");
           })
         : [];
+
       panIndiaBlocksMap[key] = blocks;
     }
   });
 }
 
 async function startServer() {
+
   const app = express();
-  const PORT = 3000;
+
+  // Use Render's assigned PORT in production, with 3000 as the local fallback
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
   // ================= CANONICAL API ROUTES =================
 
   // 1. Health & Status
+
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString()
+    });
   });
 
   app.get("/api/status", (_req, res) => {
@@ -122,12 +136,26 @@ async function startServer() {
     });
   });
 
-  // 2. SAHYOGI AI Assistant (Canonical: POST /api/sahyogi, Alias: POST /api/smrity)
-  const sahyogiHandler = async (req: express.Request, res: express.Response) => {
+  // ================= EXISTING API ROUTES =================
+
+  // ================= EXISTING API ROUTES =================
+
+  // Keep your existing routes below this point
+  // 2. SAHYOGI AI Assistant
+  // Canonical: POST /api/sahyogi
+  // Alias: POST /api/smrity
+
+  const sahyogiHandler = async (
+    req: express.Request,
+    res: express.Response
+  ) => {
     try {
       const { message, context } = req.body;
+
       if (!message || typeof message !== "string") {
-        res.status(400).json({ error: "Message is required" });
+        res.status(400).json({
+          error: "Message is required"
+        });
         return;
       }
 
