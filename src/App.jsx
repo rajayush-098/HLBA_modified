@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Menu,
   MapPin,
@@ -7,6 +7,9 @@ import {
   AlertCircle,
   CheckCircle2,
   X,
+  Info,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import "./App.css";
 import locationData from "./locationData";
@@ -30,6 +33,7 @@ import PageRisk from "./components/PageRisk";
 import PageAdvisor from "./components/PageAdvisor";
 import PageReportCard from "./components/PageReportCard";
 import SahyogiAssistant from "./components/SahyogiAssistant";
+import AboutUsSection from "./components/AboutUsSection";
 // eslint-disable-next-line no-unused-vars
 import odopData from "./odopData.json";
 import { API_ROUTES } from "./apiRoutes";
@@ -321,6 +325,20 @@ function App() {
   const [blocksMap, setBlocksMap] = useState(() => blocksData || {});
   const [udyamLoading, setUdyamLoading] = useState(false);
   const [udyamStatus, setUdyamStatus] = useState(null);
+  const [showAboutUs, setShowAboutUs] = useState(false);
+  const aboutUsRef = useRef(null);
+
+  const toggleAboutUs = () => {
+    setShowAboutUs((prev) => {
+      const next = !prev;
+      if (next) {
+        setTimeout(() => {
+          aboutUsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 100);
+      }
+      return next;
+    });
+  };
 
   const t = translations[lang] || translations.en;
 
@@ -1523,6 +1541,86 @@ function App() {
                 )}
               </div>
             </form>
+
+            {/* ================= ABOUT US (BOTTOM-MOST PART OF LANDING/HOME PAGE) ================= */}
+            <div
+              className="about-us-landing-footer no-print"
+              style={{
+                marginTop: "36px",
+                paddingTop: "24px",
+                borderTop: "1px solid #e2e8f0",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                textAlign: "center",
+                width: "100%",
+              }}
+            >
+              <button
+                type="button"
+                id="about-us-trigger-btn"
+                className="about-us-toggle-btn"
+                onClick={toggleAboutUs}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "10px 24px",
+                  backgroundColor: showAboutUs ? "#0f382a" : "#f8fafc",
+                  color: showAboutUs ? "#ffffff" : "#0f382a",
+                  border: "1.5px solid #0f382a",
+                  borderRadius: "9999px",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease-in-out",
+                  boxShadow: showAboutUs
+                    ? "0 4px 12px rgba(15, 56, 42, 0.2)"
+                    : "0 2px 4px rgba(15, 23, 42, 0.05)",
+                }}
+                aria-expanded={showAboutUs}
+                aria-controls="about-us-content-container"
+              >
+                <Info size={17} />
+                <span>
+                  {showAboutUs
+                    ? (lang === "hi" ? "व्यापार AI के बारे में विवरण छुपाएं (बंद करें)" : "Hide About Us Section (Collapse)")
+                    : (lang === "hi" ? "व्यापार AI के बारे में जानें (About Us)" : "About Us — About Vyapaar AI")}
+                </span>
+                {showAboutUs ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+
+              <p
+                style={{
+                  marginTop: "8px",
+                  fontSize: "12.5px",
+                  color: "#64748b",
+                  maxWidth: "520px",
+                }}
+              >
+                {lang === "hi"
+                  ? "छोटे, ग्रामीण और नए उद्यमियों के लिए AI-संचालित निर्णय-सहयोग मंच के उद्देश्य, कार्यप्रणाली व मूल्यों की जानकारी।"
+                  : "Learn more about Vyapaar AI's mission, decision-support approach, and capabilities for small entrepreneurs."}
+              </p>
+
+              {/* Revealable About Us content container */}
+              {showAboutUs && (
+                <div
+                  id="about-us-content-container"
+                  ref={aboutUsRef}
+                  style={{
+                    width: "100%",
+                    marginTop: "20px",
+                    animation: "fadeIn 0.35s ease-in-out",
+                  }}
+                >
+                  <AboutUsSection
+                    lang={lang}
+                    onClose={() => setShowAboutUs(false)}
+                  />
+                </div>
+              )}
+            </div>
           </section>
         ) : (
           /* ================= BUSINESS ANALYSIS HUB WITH MANY SIDE PAGES ================= */
