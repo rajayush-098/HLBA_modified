@@ -3,6 +3,13 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { handleAdvisor, handleAnalyze, getSchemeDetailsForAdvisor } from "./src/advisorLogic";
+import {
+  isDairyCategory,
+  buildDairyAnalysis,
+  parseCsvDataLayer,
+  formatCsvDataLayer,
+} from "./src/dairyDataService";
+import type { DairyAnalysisResult } from "./src/dairyDataService";
 import { MEERUT_DATA, getTehsilMarketReach } from "./locationData";
 import rawBlocksData from "./src/rawBlocksData.json";
 
@@ -137,6 +144,22 @@ async function startServer() {
       let contextStr = "";
       if (context && typeof context === "object") {
         contextStr = `\nCurrent User Business Profile:\n${JSON.stringify(context, null, 2)}`;
+        const cat = context.businessType || context.category || "";
+        if (isDairyCategory(cat) || message.includes("Dist_Population") || message.includes("[CSV DATA LAYER]")) {
+          const dData = buildDairyAnalysis({
+            district: context.district || "Meerut",
+            monthlyRevenue: context.monthlyRevenue || context.monthly_revenue,
+            monthlyExpenses: context.monthlyExpenses || context.monthly_expenses,
+            monthlyEmi: context.monthlyEmi || context.monthly_emi,
+            projectCost: context.totalProjectCost || context.project_cost,
+          });
+          contextStr += `\n==== DAIRY SECTOR MACRO-DEMOGRAPHICS & MARKET GAP ====
+[CSV DATA LAYER]
+${dData.csv_data_layer}
+Price Arbitrage: ${dData.price_arbitrage.explanation}
+Demographic Targeting: ${dData.demographic_targeting.explanation}
+Market Sizing: ${dData.market_sizing.explanation}`;
+        }
       }
 
       const systemInstruction = `You are "SAHYOGI" (सहयोगी), a friendly, respectful, and practical AI business companion built for "Vyapaar AI".
@@ -349,15 +372,43 @@ ${contextStr}`;
 
       const locationLabel = [block, district].filter(Boolean).join(", ") || "the specified local area";
 
+      // Dairy sector macro-demographics & market gap layer integration
+      // CRITICAL CONDITION: ONLY apply if category is Dairy & Milk Products
+      let dairyPromptSection = "";
+      let dairyAnalysisResult: DairyAnalysisResult | null = null;
+      if (isDairyCategory(business_category)) {
+        dairyAnalysisResult = buildDairyAnalysis({
+          district,
+          monthlyRevenue: req.body?.monthly_revenue ? Number(req.body.monthly_revenue) : (result.financial_analysis?.monthly_revenue ?? null),
+          monthlyExpenses: req.body?.monthly_expenses ? Number(req.body.monthly_expenses) : (result.financial_analysis?.monthly_expenses ?? null),
+          monthlyEmi: result.loan_affordability?.monthly_emi,
+          projectCost,
+        });
+
+        result.dairy_analysis = dairyAnalysisResult;
+
+        dairyPromptSection = `
+CRITICAL INSTRUCTION FOR DAIRY CATEGORY:
+==== DAIRY SECTOR MACRO-DEMOGRAPHICS & MARKET GAP ====
+[CSV DATA LAYER]
+${dairyAnalysisResult.csv_data_layer}
+
+You must integrate the following into your market_summary:
+- Price Arbitrage (from Price Layer): Compare the Local_Sourcing_Price (₹${dairyAnalysisResult.local_sourcing_price.toFixed(2)}/kg) to Nat_Retail_Avg (₹61.45/kg) and Nat_Wholesale_Avg (₹57.63/kg). ${dairyAnalysisResult.price_arbitrage.status === "Strong Sourcing Advantage" ? 'Since local cost is significantly lower, explicitly state they have a "Strong Sourcing Advantage" and should focus on volume.' : 'Since local cost is near or above the national average, warn them of "Margin Compression" and advise premium retail packaging.'}
+- Demographic Targeting (from District Gap Layer): Analyze the Agri_Workers (${dairyAnalysisResult.agri_workers.toLocaleString("en-IN")}) relative to Dist_Population (${dairyAnalysisResult.dist_population.toLocaleString("en-IN")}). Since the district has a high concentration of agricultural workers, you MUST suggest a secondary B2B revenue stream tailored to farmers (e.g., selling cattle feed, urea, or tractor rentals).
+- Market Sizing (from Integrated Dataset): Use the district population (${dairyAnalysisResult.dist_population.toLocaleString("en-IN")}) to mathematically validate if there are enough potential local buyers to support their proposed production scale and EMI payments.`;
+      }
+
       const prompt = `You are an honest, experienced rural business advisor in India.
 The user wants to start a ${business_category} business in ${locationLabel}${pin ? ` (PIN: ${pin})` : ""}.
 Context: Estimated Catchment: ~${hyperLocalData.reachable_consumers} consumers; Zone: ${hyperLocalData.zone_classification}; Estimated Project Cost: ₹${projectCost}; Screened Scheme: ${schemeRoute}.
+${dairyPromptSection}
 
 Generate a market_summary consisting of EXACTLY TWO flowing paragraphs (about 6 to 8 sentences total):
 
-Paragraph 1: Discuss the demand viability for a ${business_category} in ${locationLabel}. Note that actual local competition should be confirmed by a physical field visit, and discuss whether the local catchment can support steady sales. State clearly that scheme sanction is subject to official bank appraisal.
+Paragraph 1: Discuss the demand viability for a ${business_category} in ${locationLabel}. Note that actual local competition should be confirmed by a physical field visit, and discuss whether the local catchment can support steady sales. State clearly that scheme sanction is subject to official bank appraisal.${dairyAnalysisResult ? ` Incorporate Price Arbitrage (${dairyAnalysisResult.price_arbitrage.status === "Strong Sourcing Advantage" ? 'explicitly stating a "Strong Sourcing Advantage" and focusing on volume' : 'warning of "Margin Compression" and advising premium retail packaging'}) and Market Sizing (using district population of ${dairyAnalysisResult.dist_population.toLocaleString("en-IN")} to mathematically validate local buyers for production scale and EMI payments).` : ''}
 
-Paragraph 2: Provide a practical, low-cost operational tip on how the entrepreneur can gain customer trust in rural/semi-urban markets (e.g., direct relationships, weekly market presence, quality consistency, fair pricing).
+Paragraph 2: Provide a practical, low-cost operational tip on how the entrepreneur can gain customer trust in rural/semi-urban markets (e.g., direct relationships, weekly market presence, quality consistency, fair pricing).${dairyAnalysisResult ? ` Suggest a secondary B2B revenue stream tailored to farmers (e.g., selling cattle feed, urea, or tractor rentals) given the high concentration of agricultural workers (${dairyAnalysisResult.agri_workers.toLocaleString("en-IN")} workers).` : ''}
 
 STRICT CONSTRAINTS:
 - Output exactly 2 flowing paragraphs separated by a single blank line.
@@ -389,10 +440,16 @@ STRICT CONSTRAINTS:
       }
 
       if (!market_summary) {
-        market_summary =
-          rawLang === "hi"
-            ? `स्थानीय बाज़ार में ${business_category} के लिए नियमित उपभोक्ता माँग का अनुमान लगाया गया है। इस क्षेत्र में सफलता मुख्य रूप से उचित मूल्य निर्धारण और ग्राहकों के विश्वास पर निर्भर करेगी। सरकारी लोन योजना (${schemeRoute}) के तहत पात्रता एक प्रारंभिक स्क्रीनिंग है जिसकी अंतिम स्वीकृति बैंक सत्यापन पर निर्भर है।\n\nग्राहकों का विश्वास तेज़ी से बनाने के लिए पहले दिन से ही उत्पाद की गुणवत्ता और समय पर सेवा पर विशेष ध्यान दें। नज़दीकी परिवारों व स्थानीय दुकानदारों से सीधा संपर्क रखें और बाज़ार में अपनी नियमित उपस्थिति दर्ज कराएं।`
-            : `There is steady daily demand potential for ${business_category} across ${locationLabel}. Business viability will depend heavily on maintaining competitive pricing and building direct community trust. Note that government scheme (${schemeRoute}) alignment is a preliminary screening and final sanction depends on bank appraisal.\n\nTo build initial customer loyalty, focus on consistent product purity and transparent dealings rather than relying solely on foot traffic. Cultivating direct relationships with local families and neighborhood stores will generate reliable repeat business.`;
+        if (dairyAnalysisResult) {
+          market_summary = rawLang === "hi"
+            ? `${dairyAnalysisResult.summary_report_hi}`
+            : `${dairyAnalysisResult.summary_report}`;
+        } else {
+          market_summary =
+            rawLang === "hi"
+              ? `स्थानीय बाज़ार में ${business_category} के लिए नियमित उपभोक्ता माँग का अनुमान लगाया गया है। इस क्षेत्र में सफलता मुख्य रूप से उचित मूल्य निर्धारण और ग्राहकों के विश्वास पर निर्भर करेगी। सरकारी लोन योजना (${schemeRoute}) के तहत पात्रता एक प्रारंभिक स्क्रीनिंग है जिसकी अंतिम स्वीकृति बैंक सत्यापन पर निर्भर है।\n\nग्राहकों का विश्वास तेज़ी से बनाने के लिए पहले दिन से ही उत्पाद की गुणवत्ता और समय पर सेवा पर विशेष ध्यान दें। नज़दीकी परिवारों व स्थानीय दुकानदारों से सीधा संपर्क रखें और बाज़ार में अपनी नियमित उपस्थिति दर्ज कराएं।`
+              : `There is steady daily demand potential for ${business_category} across ${locationLabel}. Business viability will depend heavily on maintaining competitive pricing and building direct community trust. Note that government scheme (${schemeRoute}) alignment is a preliminary screening and final sanction depends on bank appraisal.\n\nTo build initial customer loyalty, focus on consistent product purity and transparent dealings rather than relying solely on foot traffic. Cultivating direct relationships with local families and neighborhood stores will generate reliable repeat business.`;
+        }
       }
 
       res.json({
@@ -635,6 +692,58 @@ OFFICIAL GOVERNMENT SCHEME DATASET (JanSamarth / Official Ministry Rules):
         }
       }
 
+      // ================= DAIRY SECTOR MACRO-DEMOGRAPHICS & MARKET GAP =================
+      // CRITICAL CONDITION: ONLY apply this specific demographic and pricing analysis if the user's business category
+      // is "Dairy & Milk Products" (e.g., dairy farm, milk processing, ghee manufacturing). For all other businesses, ignore this section.
+      const bCategory = businessContext.businessType || businessContext.category || req.body?.category || "";
+      const hasCsvInQuery = message.includes("Dist_Population") || message.includes("[CSV DATA LAYER]");
+      const isDairy = isDairyCategory(bCategory) || hasCsvInQuery;
+
+      let dairyOfficialBlock = "";
+      let dairyAnalysisData: DairyAnalysisResult | null = null;
+
+      if (isDairy) {
+        let customCsv = parseCsvDataLayer(message);
+        if (!customCsv && businessContext.csvDataLayer) {
+          customCsv = parseCsvDataLayer(businessContext.csvDataLayer);
+        }
+
+        let customSourcing = businessContext.localSourcingPrice || businessContext.sourcingPrice || null;
+        if (!customSourcing) {
+          const matchSourcing = message.match(/(?:sourcing|purchase|buying|procurement|cost|kharid)\s*(?:price|rate|cost)?\s*(?:is|at|of|mein)?\s*₹?\s*([0-9]+(?:\.[0-9]+)?)/i);
+          if (matchSourcing) {
+            customSourcing = Number(matchSourcing[1]);
+          }
+        }
+
+        dairyAnalysisData = buildDairyAnalysis({
+          district: bDistrict,
+          customCsvData: customCsv,
+          customSourcingPrice: customSourcing,
+          monthlyRevenue: numRevenue,
+          monthlyExpenses: numExpenses,
+          monthlyEmi: numEmi,
+          projectCost: bProjectCost,
+        });
+
+        dairyOfficialBlock = `
+==== DAIRY SECTOR MACRO-DEMOGRAPHICS & MARKET GAP ====
+[CSV DATA LAYER]
+${dairyAnalysisData.csv_data_layer}
+
+CRITICAL MANDATORY INSTRUCTIONS FOR DAIRY SECTOR:
+1. Price Arbitrage (from Price Layer):
+   - Compare Local_Sourcing_Price (₹${dairyAnalysisData.local_sourcing_price.toFixed(2)}/kg) to Nat_Retail_Avg (₹61.45/kg) and Nat_Wholesale_Avg (₹57.63/kg).
+   - ${dairyAnalysisData.price_arbitrage.status === "Strong Sourcing Advantage" ? 'Since local cost is significantly lower, you MUST explicitly state that they have a "Strong Sourcing Advantage" and should focus on volume.' : 'Since local cost is near or above the national average, you MUST warn them of "Margin Compression" and advise premium retail packaging.'}
+
+2. Demographic Targeting (from District Gap Layer):
+   - Analyze Agri_Workers (${dairyAnalysisData.agri_workers.toLocaleString("en-IN")}) relative to Dist_Population (${dairyAnalysisData.dist_population.toLocaleString("en-IN")}).
+   - Since the district has a high concentration of agricultural workers, you MUST suggest a secondary B2B revenue stream tailored to farmers (e.g., selling cattle feed, urea, or tractor rentals).
+
+3. Market Sizing (from Integrated Dataset):
+   - Use the district population (${dairyAnalysisData.dist_population.toLocaleString("en-IN")}) to mathematically validate if there are enough potential local buyers to support their proposed production scale and EMI payments.`;
+      }
+
       const preCalculatedBlock = `
 DETERMINISTIC PRE-CALCULATED METRICS (AUTHORITATIVE SOURCE OF TRUTH — NEVER RECALCULATE):
 - Expected Monthly Revenue: ${numRevenue != null ? `₹${numRevenue.toLocaleString("en-IN")}` : "Not provided"}
@@ -644,7 +753,8 @@ DETERMINISTIC PRE-CALCULATED METRICS (AUTHORITATIVE SOURCE OF TRUTH — NEVER RE
 - Surplus After EMI: ${surplusAfterEmi != null ? `₹${surplusAfterEmi.toLocaleString("en-IN")}` : "Not calculated"}
 - Minimum Break-Even Revenue Needed: ${breakEvenRevenue != null ? `₹${breakEvenRevenue.toLocaleString("en-IN")}` : "Not calculated"}
 ${stressCalculationText}
-${schemeOfficialText}`;
+${schemeOfficialText}
+${dairyOfficialBlock}`;
 
       const systemInstruction = `You are SAHYOGI (सहयोगी), an intelligent, practical, and highly empathetic rural business advisor and mentor in India.
 You have the following verified business and financial data in mind for this entrepreneur:
@@ -707,8 +817,20 @@ LANGUAGE & TONE:
 - Keep answers concise, direct, and conversational (this is spoken in Voice Mode).`;
 
       // Helper to generate deterministic fallback when Gemini is unavailable
-      const runFallback = () =>
-        handleAdvisor({
+      const runFallback = () => {
+        const isDairyQuery = isDairy && (
+          hasCsvInQuery ||
+          /\b(dairy|milk|price arbitrage|sourcing advantage|margin compression|demographic targeting|agri_workers|market sizing|potential local buyers|cattle feed|secondary b2b|tractor rentals)\b/i.test(message)
+        );
+
+        if (isDairyQuery && dairyAnalysisData) {
+          const answerText = selectedLanguage === "Hindi" || rawLang === "hi"
+            ? dairyAnalysisData.summary_report_hi
+            : dairyAnalysisData.summary_report;
+          return { answer: answerText };
+        }
+
+        return handleAdvisor({
           question: message,
           business_name: bName,
           category: businessContext.businessType || businessContext.category,
@@ -734,6 +856,7 @@ LANGUAGE & TONE:
           language: selectedLanguage,
           history: req.body?.history,
         });
+      };
 
       const geminiClient = getGeminiClient();
       if (!geminiClient) {
@@ -744,6 +867,7 @@ LANGUAGE & TONE:
           text: fallback.answer,
           source: "fallback",
           fallbackReason: "API_KEY_UNCONFIGURED",
+          dairy_analysis: isDairy ? dairyAnalysisData : undefined,
         });
         return;
       }
@@ -814,6 +938,7 @@ LANGUAGE & TONE:
           reply: answerText,
           text: answerText,
           source: "gemini",
+          dairy_analysis: isDairy ? dairyAnalysisData : undefined,
         });
         return;
       }
@@ -826,6 +951,7 @@ LANGUAGE & TONE:
         text: fallback.answer,
         source: "fallback",
         fallbackReason: errorCategory || "FALLBACK_CALLED",
+        dairy_analysis: isDairy ? dairyAnalysisData : undefined,
       });
     } catch (err: any) {
       const errInfo = categorizeGeminiError(err);

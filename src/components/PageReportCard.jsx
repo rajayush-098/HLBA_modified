@@ -197,8 +197,50 @@ export default function PageReportCard({ result, lang, formatCurrency }) {
               <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#2563eb" }}></span>
               {isHi ? "स्थानीय बाज़ार सलाह (Market Summary)" : "Local Market Advisory Summary"}
             </h4>
-            <div style={{ fontSize: "12.5px", lineHeight: "1.6", color: "#334155" }}>
+            <div style={{ fontSize: "12.5px", lineHeight: "1.6", color: "#334155", whiteSpace: "pre-line" }}>
               {result.market_summary || result.feasibility_report}
+            </div>
+          </div>
+        )}
+
+        {/* Dairy Sector Macro-Demographics & Market Gap (Only for Dairy Category) */}
+        {result.dairy_analysis && (
+          <div className="parcha-dairy-gap-report" style={{ marginTop: "16px", padding: "14px", backgroundColor: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <h4 style={{ margin: 0, fontSize: "13.5px", fontWeight: "700", color: "#166534", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span>🥛</span>
+                {isHi ? "डेयरी क्षेत्र मैक्रो-डेमोग्राफिक्स व बाज़ार अंतर (Macro-Demographics & Market Gap)" : "Dairy Sector Macro-Demographics & Market Gap"}
+              </h4>
+              <span style={{ fontSize: "11px", fontWeight: "600", padding: "2px 8px", backgroundColor: result.dairy_analysis.price_arbitrage?.status === "Strong Sourcing Advantage" ? "#dcfce7" : "#fef3c7", color: result.dairy_analysis.price_arbitrage?.status === "Strong Sourcing Advantage" ? "#15803d" : "#b45309", borderRadius: "4px" }}>
+                {result.dairy_analysis.price_arbitrage?.status}
+              </span>
+            </div>
+
+            <div style={{ fontFamily: "monospace", fontSize: "11px", backgroundColor: "#ffffff", padding: "6px 10px", borderRadius: "4px", border: "1px solid #cbd5e1", marginBottom: "10px", color: "#334155" }}>
+              [CSV DATA LAYER] {result.dairy_analysis.csv_data_layer}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", fontSize: "11.5px", color: "#1e293b" }}>
+              <div style={{ backgroundColor: "#ffffff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <strong style={{ color: "#0f766e" }}>{isHi ? "1. मूल्य अंतरण (Price Arbitrage)" : "1. Price Arbitrage (Price Layer)"}</strong>
+                <p style={{ margin: "4px 0 0 0", lineHeight: "1.4" }}>
+                  {isHi ? result.dairy_analysis.price_arbitrage?.explanation_hi : result.dairy_analysis.price_arbitrage?.explanation}
+                </p>
+              </div>
+
+              <div style={{ backgroundColor: "#ffffff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <strong style={{ color: "#0369a1" }}>{isHi ? "2. किसान B2B लक्ष्यीकरण (Demographics)" : "2. Demographic Targeting (Gap Layer)"}</strong>
+                <p style={{ margin: "4px 0 0 0", lineHeight: "1.4" }}>
+                  {isHi ? result.dairy_analysis.demographic_targeting?.explanation_hi : result.dairy_analysis.demographic_targeting?.explanation}
+                </p>
+              </div>
+
+              <div style={{ backgroundColor: "#ffffff", padding: "8px 10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <strong style={{ color: "#7e22ce" }}>{isHi ? "3. बाज़ार आकार व EMI (Market Sizing)" : "3. Market Sizing (Integrated Dataset)"}</strong>
+                <p style={{ margin: "4px 0 0 0", lineHeight: "1.4" }}>
+                  {isHi ? result.dairy_analysis.market_sizing?.explanation_hi : result.dairy_analysis.market_sizing?.explanation}
+                </p>
+              </div>
             </div>
           </div>
         )}

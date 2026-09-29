@@ -1,6 +1,13 @@
 import { getTehsilMarketReach } from '../locationData';
 import governmentSchemesData from './government_schemes.json';
 import {
+  isDairyCategory,
+  buildDairyAnalysis,
+  parseCsvDataLayer,
+  formatCsvDataLayer,
+} from './dairyDataService';
+import type { DairyAnalysisResult } from './dairyDataService';
+import {
   routePsCoreScheme,
   calculateProjectCostAndMaxLoan,
   calculateEmi,
@@ -421,6 +428,58 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
   const netTakeHome = monthlyEmi != null ? Math.max(0, operatingSurplus - monthlyEmi) : operatingSurplus;
   const effectiveExpenses = monthlyExpenses ?? (monthlyRevenue != null && monthlyProfit != null ? Math.max(0, monthlyRevenue - monthlyProfit) : 0);
   const effectiveRevenue = monthlyRevenue ?? (monthlyExpenses != null && monthlyProfit != null ? monthlyExpenses + monthlyProfit : 0);
+
+  // CRITICAL CONDITION: DAIRY SECTOR MACRO-DEMOGRAPHICS & MARKET GAP
+  // ONLY apply this specific demographic and pricing analysis if the user's business category is "Dairy & Milk Products"
+  // (e.g., dairy farm, milk processing, ghee manufacturing). For all other businesses, ignore this section.
+  const isDairyBiz = isDairyCategory(data.category) || qLower.includes('dist_population') || qLower.includes('[csv data layer]');
+  const isDairyAnalysisQuery =
+    qLower.includes('dist_population') ||
+    qLower.includes('price arbitrage') ||
+    qLower.includes('sourcing advantage') ||
+    qLower.includes('margin compression') ||
+    qLower.includes('demographic targeting') ||
+    qLower.includes('market sizing') ||
+    qLower.includes('agri_workers') ||
+    qLower.includes('cattle feed') ||
+    qLower.includes('secondary b2b') ||
+    qLower.includes('potential local buyers') ||
+    qLower.includes('production scale and emi') ||
+    qLower.includes('macro-demographics') ||
+    qLower.includes('market gap') ||
+    (isDairyBiz && (
+      qLower.includes('buyer') ||
+      qLower.includes('sourcing') ||
+      qLower.includes('wholesale') ||
+      qLower.includes('feed') ||
+      qLower.includes('urea') ||
+      qLower.includes('tractor') ||
+      qLower.includes('kharid') ||
+      qLower.includes('rate') ||
+      qLower.includes('arbitrage')
+    ));
+
+  if (isDairyBiz && isDairyAnalysisQuery) {
+    const customCsv = parseCsvDataLayer(rawQ);
+    const dairyRes = buildDairyAnalysis({
+      district: data.district,
+      customCsvData: customCsv,
+      customSourcingPrice: userAmount,
+      monthlyRevenue: monthlyRevenue,
+      monthlyExpenses: monthlyExpenses,
+      monthlyEmi: monthlyEmi,
+      projectCost: projectCost,
+    });
+
+    if (langMode === 'hi') {
+      return {
+        answer: dairyRes.summary_report_hi,
+      };
+    }
+    return {
+      answer: dairyRes.summary_report,
+    };
+  }
 
   // 1. Follow-up resolution: check if "that", "this", "it" refers to previous turn
   const lastTurn = (data.history || []).slice(-1)[0]?.text?.toLowerCase() || '';
@@ -2069,6 +2128,27 @@ export function analyzeBusiness(data: BusinessRequest) {
   const districtWithPin = data.pin ? `${data.district} (PIN: ${data.pin})` : data.district;
   const hyperLocalRecommendation = `${data.business_name} in ${data.location}, ${districtWithPin}, ${data.state} has ${locationSuitability.toLowerCase()} market suitability. Estimated local demand is ${localDemand.toLowerCase()} with ${competitionLevel.toLowerCase()} competition.`;
 
+  // CRITICAL CONDITION: DAIRY SECTOR MACRO-DEMOGRAPHICS & MARKET GAP
+  // ONLY apply if category is Dairy & Milk Products
+  const isDairy = isDairyCategory(data.category);
+  const dairyAnalysis = isDairy
+    ? buildDairyAnalysis({
+        district: data.district,
+        monthlyRevenue: monthlyRevenue,
+        monthlyExpenses: monthlyExpenses,
+        monthlyEmi: monthlyEmi,
+        projectCost: projectCost,
+      })
+    : null;
+
+  if (dairyAnalysis) {
+    opportunityAnalysis.identified_niches.unshift(
+      'Secondary B2B revenue: Selling balanced cattle feed, silage & mineral mixtures to local farmers',
+      'Secondary B2B revenue: Distributing urea, organic manure & micro-nutrients',
+      'Secondary B2B revenue: Custom tractor & fodder harvester rental service'
+    );
+  }
+
   const hyperLocalProfile = {
     state: data.state,
     district: data.district,
@@ -2087,6 +2167,7 @@ export function analyzeBusiness(data: BusinessRequest) {
     local_opportunities: localOpportunities,
     local_risks: localRisks,
     recommendation: hyperLocalRecommendation,
+    dairy_analysis: dairyAnalysis,
   };
 
   // OVERALL BUSINESS RISK ANALYSIS
@@ -2250,6 +2331,15 @@ export function analyzeBusiness(data: BusinessRequest) {
     ];
   }
 
+  if (dairyAnalysis) {
+    businessAdvice.unshift(
+      'Establish a secondary B2B revenue stream tailored to farmers (e.g., selling cattle feed, urea, or tractor rentals).',
+      dairyAnalysis.price_arbitrage.status === 'Strong Sourcing Advantage'
+        ? 'Capitalize on Strong Sourcing Advantage by focusing on volume distribution and regular household milk delivery.'
+        : 'Protect against raw milk Margin Compression by advising premium retail packaging (such as fresh paneer, curd, or desi ghee).'
+    );
+  }
+
   // FINAL RECOMMENDATION
   let recommendation = '';
   if (dscr < 1.0) {
@@ -2343,6 +2433,7 @@ export function analyzeBusiness(data: BusinessRequest) {
       quarterly_repayment_schedule: quarterlyRepaymentSchedule,
     },
     business_advice: businessAdvice,
+    dairy_analysis: dairyAnalysis,
   };
 }
 
