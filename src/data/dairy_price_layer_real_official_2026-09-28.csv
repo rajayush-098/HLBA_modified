@@ -1,0 +1,7 @@
+price_record_id,date,state,district,market,product,price_type,price,unit,source,source_scope,data_status,notes
+DCA-MILK-2026-09-28-RETAIL,2026-09-28,India,,,Milk,retail,61.45,INR/kg,Department of Consumer Affairs - Price Monitoring System,All-India average,REAL_OFFICIAL,Daily all-India average retail price
+DCA-MILK-2026-09-28-WHOLESALE,2026-09-28,India,,,Milk,wholesale,57.6299,INR/kg,Department of Consumer Affairs - Price Monitoring System,All-India average,REAL_OFFICIAL,Official 5762.99 INR/quintal normalized to INR/kg
+DCA-MILK-2026-09-25-RETAIL,2026-09-25,India,,,Milk,retail,61.44,INR/kg,Department of Consumer Affairs - Price Monitoring System,All-India average,REAL_OFFICIAL,Daily all-India average retail price
+DCA-MILK-2026-09-25-WHOLESALE,2026-09-25,India,,,Milk,wholesale,57.6759,INR/kg,Department of Consumer Affairs - Price Monitoring System,All-India average,REAL_OFFICIAL,Official 5767.59 INR/quintal normalized to INR/kg
+DCA-GHEE-2026-09-28-RETAIL,2026-09-28,India,,,Desi Ghee,retail,701.19,INR/kg,Department of Consumer Affairs - Price Monitoring System,All-India average,REAL_OFFICIAL,Daily all-India average retail price
+DCA-BUTTER-2026-09-28-RETAIL,2026-09-28,India,,,Butter (Pasteurised),retail,60.6,INR/kg,Department of Consumer Affairs - Price Monitoring System,All-India average,REAL_OFFICIAL,Value exactly as displayed by source; verify unit/packaging before margin calculations
