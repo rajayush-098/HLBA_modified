@@ -319,6 +319,20 @@ function extractAmountFromText(text: string): number | null {
   return null;
 }
 
+export function getCategoryProfile(cat?: string, name?: string): string {
+  const combined = `${cat || ''} ${name || ''}`.toLowerCase();
+  if (/fish|fishery|machhli|matsya|aquaculture|prawn|shrimp/i.test(combined)) return 'fishery';
+  if (/dairy|milk|doodh|cattle|cow|buffalo|ghee|paneer/i.test(combined)) return 'dairy';
+  if (/poultry|chicken|murgi|broiler|layer|egg/i.test(combined)) return 'poultry';
+  if (/farm|agriculture|kheti|crop|horticulture|polyhouse|greenhouse|vegetable|fruit/i.test(combined)) return 'agriculture';
+  if (/food\s*processing|processing|atta\s*mill|flour\s*mill|oil\s*expeller|spice|bakery|pickle/i.test(combined)) return 'food_processing';
+  if (/kirana|grocery|retail|general\s*store|dukan|shop/i.test(combined)) return 'retail';
+  if (/tailor|garment|cloth|apparel|textile/i.test(combined)) return 'garments';
+  if (/manufactur|fabricat|workshop|hardware|welding/i.test(combined)) return 'manufacturing';
+  if (/transport|vehicle|logistics|auto|tempo/i.test(combined)) return 'transport';
+  return 'general';
+}
+
 export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
   const rawQ = (data.question || '').trim();
   const qLower = rawQ.toLowerCase();
@@ -329,6 +343,7 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
 
   const businessName = data.business_name || 'Your Business';
   const category = data.category || 'Enterprise';
+  const catProfile = getCategoryProfile(category, businessName);
   const monthlyRevenue = data.monthly_revenue ?? 0;
   const monthlyExpenses = data.monthly_expenses ?? 0;
   const monthlyProfit = data.monthly_profit ?? (monthlyRevenue - monthlyExpenses);
@@ -409,24 +424,71 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
     }
   }
 
-  // INTENT: What happens if I invest more? / Higher margin investment
+  // INTENT: Margin Question ("Should I increase the margin cost?", "Should I invest more margin?", "What happens if I invest more?")
   if (
-    /\b(what happens if i invest more|invest more|if i invest more|agar main zyada invest karu|zyada invest|zyada lagau|zyada paisa lagau|higher margin)\b/i.test(
+    /\b(should\s+i\s+(?:increase|raise|put\s+more|invest\s+more)\s+(?:the\s+)?margin|increase\s+(?:the\s+)?margin|margin\s+(?:badhana|zyada|badhau|increase|badhaye)|should\s+i\s+put\s+more\s+margin|higher\s+margin|what\s+happens\s+if\s+i\s+invest\s+more|if\s+i\s+invest\s+more|invest\s+more|zyada\s+invest|zyada\s+margin|margin\s+cost)\b/i.test(
       qLower
-    )
+    ) ||
+    /मार्जिन\s*(?:बढ़ाना|बढ़ाएं|अधिक|ज्यादा)/.test(rawQ) ||
+    /मार्जिन.*लागत/.test(rawQ)
   ) {
+    const isExceedingScheme =
+      feasibility.toLowerCase().includes('not eligible') ||
+      feasibility.toLowerCase().includes('exceed') ||
+      schemeName.toLowerCase().includes('exceed') ||
+      (eligibleLoan === 0 && projectCost > 1500000) ||
+      projectCost > 10000000;
+
+    if (isExceedingScheme) {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Sirf promoter margin badhane se scheme eligibility ka masla hal nahi hoga. Sarkari loan yojanaon (jaise PMMY ya PMEGP) me total project cost ki ek nishchit ceiling hoti hai (jaise ₹10 lakh ya ₹25 lakh). Agar aapka total project cost (₹${formatCurrency(projectCost)}) scheme limit se zyada hai, to aap chahe jitna bhi margin badha lein, scheme qualify nahi hogi — iske liye project ka scale chhota karke total cost ko scheme ke daayre me lana zaroori hai. Agar project eligible hai, to zyada margin lagane se loan aur EMI zaroor kam honge, par dhyan rahe ki daily emergency working capital ke liye cash reserve bacha rahe.`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `केवल प्रमोटर मार्जिन बढ़ाने से योजना की पात्रता (eligibility) स्वतः हल नहीं होगी। सरकारी ऋण योजनाओं (जैसे PMMY या PMEGP) में प्रोजेक्ट लागत की अधिकतम सीमा तय होती है। यदि कुल प्रोजेक्ट लागत (₹${formatCurrency(projectCost)}) योजना की सीमा से अधिक है, तो अधिक मार्जिन लगाने पर भी योजना स्वीकृत नहीं होगी — इसके लिए प्रोजेक्ट का पैमाना घटाकर उसे योजना की सीमा में लाना अधिक प्रासंगिक है। यदि प्रोजेक्ट पात्र है, तो मार्जिन बढ़ाने से ऋण राशि और मासिक EMI घटेंगे, किंतु अपनी आपातकालीन कार्यशील पूंजी को सुरक्षित रखकर ही अतिरिक्त मार्जिन लगाएं।`,
+        };
+      }
+      return {
+        answer: `Increasing your promoter margin will not solve scheme eligibility on its own. Government loan schemes (such as PMMY or PMEGP) have fixed upper limits on total project cost or maximum loan amounts (e.g., ₹10 lakh to ₹50 lakh). If your project cost (₹${formatCurrency(projectCost)}) exceeds the applicable scheme ceiling, contributing a higher margin does not change that scheme limit. Instead, reducing your project size or phasing equipment to bring the total cost within the eligible threshold is what makes it qualify. When a project is eligible, a higher margin does reduce your borrowing and EMI, but be careful not to lock up your entire cash reserve.`,
+      };
+    }
+
     if (langMode === 'hinglish') {
       return {
-        answer: `Agar aap zyada margin invest karte hain (jaise 10% ki jagah 20% ya 30%): 1) Bank se loan kam lena padega (₹${formatCurrency(eligibleLoan)} se kam); 2) Aapki monthly EMI ₹${formatCurrency(monthlyEmi)} se seedhe kam ho jayegi; 3) Byaj ki bachat hogi aur har mahine bacha hua munafa badh jayega. Jaise hi aap margin badhayenge, debt risk kam hoga aur business aur bhi mazboot hoga.`,
+        answer: `Margin badhane ka faisla ek trade-off hai: Fayda yeh hai ki apna paisa zyada lagane se bank loan ₹${formatCurrency(eligibleLoan)} se kam lena padega, jisse har mahine ki EMI ₹${formatCurrency(monthlyEmi)} se seedhe kam ho jayegi aur byaj bachega. Lekin nuksan yeh hai ki aapki personal bachat lock ho jayegi aur daily emergency kharchon ke liye cash kam pad sakta hai. Saath hi, margin badhane se sarkari scheme ki ceiling limit nahi badhti. Isliye margin tabhi badhayein jab margin dene ke baad bhi aapke paas kam se kam 1-2 mahine ka operating cash (lagbhag ₹${formatCurrency(effectiveExpenses)}) bacha rahe.`,
       };
     }
     if (langMode === 'hi') {
       return {
-        answer: `यदि आप अधिक मार्जिन निवेश करते हैं: 1) बैंक ऋण की आवश्यकता ₹${formatCurrency(eligibleLoan)} से घट जाएगी; 2) आपकी मासिक EMI ₹${formatCurrency(monthlyEmi)} से कम होगी, जिससे ब्याज का खर्च बचेगा; 3) हर महीने आपके हाथ में बचने वाला शुद्ध लाभ बढ़ जाएगा। इससे व्यवसाय का वित्तीय जोखिम न्यूनतम हो जाता है।`,
+        answer: `प्रमोटर मार्जिन बढ़ाने में दोनों पक्षों (trade-off) पर विचार करना चाहिए: मुख्य लाभ यह है कि अधिक स्वयं का अंशदान देने से आवश्यक बैंक लोन ₹${formatCurrency(eligibleLoan)} से घट जाएगा, जिससे मासिक EMI ₹${formatCurrency(monthlyEmi)} से कम होगी और ब्याज की बचत होगी। वहीं दूसरा पहलू यह है कि आपकी नकद पूंजी ब्लॉक हो जाएगी, जिससे आपातकालीन कार्यशील पूंजी का संकट हो सकता है। साथ ही, मार्जिन बढ़ाने से योजना की सीमा नहीं बढ़ती। अतः अतिरिक्त मार्जिन तभी लगाएं जब आपके पास दैनिक खर्चों के लिए लगभग ₹${formatCurrency(effectiveExpenses)} का लिक्विड रिज़र्व फंड शेष रहे।`,
       };
     }
     return {
-      answer: `If you invest more upfront margin capital: 1) Your required bank loan decreases below ₹${formatCurrency(eligibleLoan)}; 2) Your monthly EMI drops proportionately from ₹${formatCurrency(monthlyEmi)}, saving substantial interest; 3) Your financial risk drops and your net monthly cash surplus increases.`,
+      answer: `Increasing your promoter margin involves a clear trade-off: On the positive side, putting more of your own money reduces your required bank loan below ₹${formatCurrency(eligibleLoan)}, which directly lowers your monthly EMI from ₹${formatCurrency(monthlyEmi)} and saves on total interest paid over ${tenure} months. However, the downside is locking up more personal savings. If you commit too much cash to upfront margin, you may run short of working capital for daily operations or emergencies. Also, remember that increasing margin does not expand government scheme ceilings; if project size ever exceeds scheme limits, downsizing the project scale is what matters. Therefore, only increase your margin if you retain at least 1–2 months of operating expenses (₹${formatCurrency(effectiveExpenses)}) as liquid cash.`,
+    };
+  }
+
+  // INTENT: Cost Reduction Question ("How can I lower my initial setup cost?", "Reduce setup cost", etc.)
+  if (
+    /\b(how\s+can\s+i\s+(?:lower|reduce|cut)\s+(?:my\s+)?(?:initial\s+)?(?:setup\s+)?cost|lower\s+(?:the\s+)?(?:initial\s+)?setup\s+cost|reduce\s+(?:the\s+)?(?:initial\s+)?setup\s+cost|setup\s+cost\s+kam|initial\s+cost\s+kam|kharch\s+kam\s+kaise|lower\s+(?:my\s+)?initial\s+investment|reduce\s+investment|cut\s+(?:down\s+)?(?:setup\s+)?cost|cost\s+cutting|lagat\s+kam|kam\s+lagat)\b/i.test(
+      qLower
+    ) ||
+    /(?:सेटअप\s*लागत|शुरुआती\s*लागत|खर्च|लागत)\s*(?:कम\s*कैसे|कैसे\s*कम|घटा)/.test(rawQ)
+  ) {
+    if (langMode === 'hinglish') {
+      return {
+        answer: `Initial setup cost (₹${formatCurrency(projectCost)}) ko kam karne ke 4 practical tarike hain:\n1) Phased Startup: Shuruat me sirf zaroori core productive machinery lein aur extra automation ya sajawat baad ke mahino par chhod dein.\n2) Khareedne ke bajaye Kiraye (Lease) par lein: Shed, dukan ya machine khareedne ke bajaye lease par lene se upfront capital kharch bohot kam ho jata hai.\n3) Refurbished / Second-Hand Machinery: Brand-new equipment ke bajaye achhi condition wali tested second-hand machine lein.\n4) Initial Capacity Chhoti Rakhein: Shuruat me local demand ke hisab se chhota pilot batch shuru karein.\nFinancial fayda: Project cost kam hote hi aapka required 10% promoter margin (₹${formatCurrency(promoterMargin)}) aur bank loan (₹${formatCurrency(eligibleLoan)}) dono kam ho jayenge, jisse monthly EMI ghategi aur business par karz ka dabav nahi aayega.`,
+      };
+    }
+    if (langMode === 'hi') {
+      return {
+        answer: `शुरुआती सेटअप लागत (वर्तमान में ₹${formatCurrency(projectCost)}) को कम करने के 4 व्यावहारिक उपाय:\n1) चरणबद्ध शुरुआत (Phased Procurement): शुरुआत में केवल मुख्य उत्पादन मशीनरी खरीदें और अतिरिक्त ऑटोमेशन या बड़े इंफ्रास्ट्रक्चर को बाद के लिए टालें।\n2) खरीदने के बजाय लीज/किराया: वर्कशॉप शेड या भारी उपकरणों को खरीदने के बजाय लीज पर लें, जिससे अग्रिम पूंजी बचती है।\n3) प्रमाणित प्रयुक्त (Refurbished) उपकरण: प्रतिष्ठित विक्रेताओं से अच्छी स्थिति वाली प्रयुक्त मशीनरी लेकर मशीनरी खर्च घटाया जा सकता है।\n4) शुरुआती उत्पादन क्षमता सीमित रखें: पहले दिन से बड़े पैमाने के बजाय स्थानीय ग्राहकों की तत्काल मांग के अनुसार पायलट स्तर पर शुरुआत करें।\nवित्तीय प्रभाव: प्रोजेक्ट लागत कम होने से आपका 10% आवश्यक प्रमोटर मार्जिन (₹${formatCurrency(promoterMargin)}) और बैंक लोन (₹${formatCurrency(eligibleLoan)}) दोनों घटेंगे, जिससे मासिक EMI कम होगी और व्यवसाय तेजी से लाभप्रद बनेगा।`,
+      };
+    }
+    return {
+      answer: `To lower your initial setup cost from the current ₹${formatCurrency(projectCost)}, here are 4 practical strategies:\n1. Start in phases: Procure only the primary, revenue-generating core equipment first and postpone optional automation, branding, or secondary capacity until sales stabilize.\n2. Lease or rent instead of purchasing: Renting workspace or leasing heavy machinery converts high upfront capital expenditure into smaller monthly operating costs.\n3. Source certified refurbished machinery: Procure tested, second-hand machinery from reputable workshops to cut equipment outlay without sacrificing performance.\n4. Scale down initial production capacity: Size the initial pilot for immediate, verified local buyers rather than over-investing in peak capacity upfront.\nFinancial impact: Reducing the total project cost directly lowers your required 10% promoter margin below ₹${formatCurrency(promoterMargin)} and reduces the required loan below ₹${formatCurrency(eligibleLoan)}, which reduces your monthly EMI and speeds up breakeven.`,
     };
   }
 
@@ -710,24 +772,140 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
     };
   }
 
-  // INTENT: Why is this risky? / What could make this business fail?
+  // INTENT: Why is this risky? / What are the main risks for this business here? / What could make this business fail?
   if (
-    /\b(why risky|why did you say this is risky|make this business fail|fail kyu|khatra kya|biggest risks|what are the main risks|risk factor)\b/i.test(
+    /\b(why\s+risky|why\s+did\s+you\s+say\s+this\s+is\s+risky|make\s+this\s+business\s+fail|fail\s+kyu|khatra\s+kya|khatre\s+kya|biggest\s+risks|what\s+are\s+the\s+main\s+risks|main\s+risks|risk\s+factor|risks\s+for\s+this\s+business|what\s+risks|kya\s+khatra|kya\s+khatre)\b/i.test(
       qLower
-    )
+    ) ||
+    /(?:मुख्य\s*जोखिम|बड़ा\s*जोखिम|खतरा|खतरे|नुकसान|जोखिम\s*क्या)/.test(rawQ)
   ) {
+    const hasDebt = monthlyEmi > 0 && eligibleLoan > 0;
+
+    if (catProfile === 'fishery') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Fish farming business (${businessName}) mein ${location} ke context me mukhya practical risks yeh hain:\n1) Paani ki quality aur oxygen level kam hona jisse machhliyon me mortality (maut) ka khatra rehta hai;\n2) Commercial fish feed (dana) ki lagatar badhti keemat jo operational kharch ka sabse bada hissa hai;\n3) Barish/monsoon me talaab me overflow ya garmi me paani sookhna;\n4) Harvest ke time mandi me daam girna aur local cold storage ki kami;\n5) Chori aur pakshiyon (predators) se nuksan.${hasDebt ? `\n6) Machhli badi hone tak har mahine ₹${formatCurrency(monthlyEmi)} ki EMI samay par nikalna.` : ''}\nIn risks se bachne ke liye regular water testing, aeration backup aur backup cash zaroor rakhein.`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `मत्स्य पालन व्यवसाय (${businessName}) के लिए ${location} में मुख्य व्यावहारिक जोखिम निम्नलिखित हैं:\n1) पानी की गुणवत्ता व घुलित ऑक्सीजन में कमी से मछलियों में मृत्यु दर (mortality);\n2) कमर्शियल फ़ीड (मछली आहार) की अनियंत्रित कीमतें जो कुल खर्च का 60–70% होती हैं;\n3) अत्यधिक वर्षा/बाढ़ से तालाब ओवरफ्लो या ग्रीष्मकाल में जल स्तर गिरना;\n4) फसल तैयार होने पर स्थानीय मंडी में भाव गिरना व कोल्ड स्टोरेज का अभाव;\n5) पक्षियों व परभक्षियों से नुकसान।${hasDebt ? `\n6) मछलियों के परिपक्व होने तक प्रति माह ₹${formatCurrency(monthlyEmi)} की बैंक EMI का समय पर प्रबंधन।` : ''}\nनियमित जल परीक्षण और आपातकालीन रिज़र्व रखने से इन जोखिमों को नियंत्रित किया जा सकता है।`,
+        };
+      }
+      return {
+        answer: `For a fish farming business (${businessName}) in ${location}, the primary operational risks are:\n1) Water quality deterioration and dissolved oxygen depletion causing fish mortality;\n2) Escalating commercial feed costs, which form 60–70% of operating expenses;\n3) Monsoon flooding or extreme seasonal water evaporation;\n4) Post-harvest mandi price dips and lack of refrigerated cold storage;\n5) Bird predation and theft.${hasDebt ? `\n6) Debt servicing on your ₹${formatCurrency(monthlyEmi)} monthly EMI during the fingerling grow-out period.` : ''}\nKeeping water testing kits, backup aerators, and an operating cash reserve directly mitigates these hazards.`,
+      };
+    }
+
+    if (catProfile === 'dairy') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Dairy business mein ${location} ke hisaab se mukhya risks yeh hain:\n1) Pashuon me bimariyan (FMD, mastitis) jisse doodh utpadan achanak gir sakta hai;\n2) Hare chara aur feed ki badhti keemat;\n3) Garmi ke mausam me lactation yield me kami;\n4) Samay par chilled collection na hone par doodh kharab hone ka risk.${hasDebt ? `\n5) Dry period me ₹${formatCurrency(monthlyEmi)} ki monthly EMI ka niyamit bhugtan.` : ''}`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `डेयरी व्यवसाय में ${location} के संदर्भ में मुख्य जोखिम:\n1) पशुओं में मौसमी बीमारियां व थनैला जिससे दुग्ध उत्पादन घट सकता है;\n2) सूखे व हरे चारे तथा संतुलित आहार की बढ़ती कीमतें;\n3) ग्रीष्म ऋतु में दुग्ध उत्पादन में प्राकृतिक गिरावट;\n4) समय पर प्रशीतन (chilling) न मिलने पर दूध खराब होने का खतरा।${hasDebt ? `\n5) पशुओं के ड्राई पीरियड में ₹${formatCurrency(monthlyEmi)} की बैंक किश्त का समय पर भुगतान।` : ''}`,
+        };
+      }
+      return {
+        answer: `For a dairy enterprise in ${location}, the key operational risks are:\n1) Cattle morbidity and diseases (mastitis, FMD) impacting milk production;\n2) Feed and green fodder cost inflation;\n3) Summer drop in lactation yields;\n4) Milk spoilage risk without rapid chilling or reliable local collection.${hasDebt ? `\n5) Servicing the ₹${formatCurrency(monthlyEmi)} monthly EMI during cattle dry cycles.` : ''}`,
+      };
+    }
+
+    if (catProfile === 'poultry') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Poultry business ke mukhya practical risks:\n1) Sangramak bimariyan (bird flu, Ranikhet) jisse batch mortality ka khatra rehta hai;\n2) Soyabean aur makka feed ke daam me tezi;\n3) Garmi me heat stroke aur sardi me temperature control;\n4) Wholesale mandi me chicken aur andon ke daam achanak girna.${hasDebt ? `\n5) Batch bikne ke beech ke dino me ₹${formatCurrency(monthlyEmi)} ki EMI ka intazam.` : ''}`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `पोल्ट्री व्यवसाय के प्रमुख व्यावहारिक जोखिम:\n1) संक्रामक बीमारियां (बर्ड फ्लू, रानीखेत) जिससे बर्ड्स की मृत्यु दर का खतरा;\n2) मक्का व सोयाबीन आहार की कीमतों में उतार-चढ़ाव;\n3) मौसमी तापमान व लू (heat stress) का प्रभाव;\n4) थोक बाज़ार में चिकन व अंडों की कीमतों में अचानक गिरावट।${hasDebt ? `\n5) नए बैच के तैयार होने तक ₹${formatCurrency(monthlyEmi)} की EMI का प्रबंधन।` : ''}`,
+        };
+      }
+      return {
+        answer: `For a poultry venture in ${location}, the main operational risks are:\n1) Highly contagious avian epidemics (bird flu, Ranikhet) causing flock mortality;\n2) Volatility in maize and soybean feed prices;\n3) Extreme seasonal temperature and heat stress;\n4) Sudden wholesale price collapses for broilers and eggs.${hasDebt ? `\n5) Servicing your ₹${formatCurrency(monthlyEmi)} monthly EMI between flock harvesting cycles.` : ''}`,
+      };
+    }
+
+    if (catProfile === 'agriculture') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Kheti aur agriculture business mein mukhya risks:\n1) Mausam aur barish ki anishchitta;\n2) Keede aur fasal ki bimariyan;\n3) Fasal aane par mandi me achanak daam girna;\n4) Beej aur khad ke badhte daam.${hasDebt ? `\n5) Harvest ke beech me ₹${formatCurrency(monthlyEmi)} ki monthly EMI ka bhugtan.` : ''}`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `कृषि व्यवसाय में मुख्य जोखिम:\n1) मौसम व अनियंत्रित वर्षा का चक्र;\n2) कीट प्रकोप और फसल रोग;\n3) कटाई के समय मंडी में मूल्य गिरावट;\n4) खाद, बीज व सिंचाई की बढ़ती लागत।${hasDebt ? `\n5) फसल कटाई के बीच ₹${formatCurrency(monthlyEmi)} की बैंक किश्त का भुगतान।` : ''}`,
+        };
+      }
+      return {
+        answer: `For an agricultural business in ${location}, primary risks include:\n1) Rainfall and weather volatility;\n2) Pest infestations and crop blight;\n3) Post-harvest mandi price crashes;\n4) Escalating seed, fertilizer, and irrigation power costs.${hasDebt ? `\n5) Servicing the ₹${formatCurrency(monthlyEmi)} monthly EMI during off-harvest months.` : ''}`,
+      };
+    }
+
+    if (catProfile === 'food_processing') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Food processing business mein mukhya risks:\n1) Raw material (anaj, sarson, masale) ke mausam ke hisab se badalte daam;\n2) Storage me nami aur keede se raw material kharab hona;\n3) Bijli ki regular supply na hona;\n4) FSSAI hygiene niyam aur quality consistency.${hasDebt ? `\n5) Mahine ki ₹${formatCurrency(monthlyEmi)} loan EMI ka niyamit bhugtan.` : ''}`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `खाद्य प्रसंस्करण व्यवसाय में मुख्य जोखिम:\n1) मौसमी कारणों से कच्चे माल (अनाज, तिलहन आदि) की कीमतों में उतार-चढ़ाव;\n2) भंडारण में नमी व कीटों से अनाज का नुकसान;\n3) विद्युत आपूर्ति में रुकावट;\n4) गुणवत्ता व स्वच्छता मानकों का अनुपालन।${hasDebt ? `\n5) ₹${formatCurrency(monthlyEmi)} की मासिक EMI का नियमित भुगतान।` : ''}`,
+        };
+      }
+      return {
+        answer: `For an agro/food processing enterprise, primary risks are:\n1) Seasonal price spikes and availability swings for raw agri-inputs;\n2) Storage moisture and pest spoilage;\n3) Industrial power supply interruptions;\n4) Maintaining food hygiene and quality consistency.${hasDebt ? `\n5) Servicing your ₹${formatCurrency(monthlyEmi)} monthly loan EMI.` : ''}`,
+      };
+    }
+
+    if (catProfile === 'retail') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Retail/kirana business mein sabse bade practical risks:\n1) Grahakon ko zyada udhari (customer credit) baantne se working capital fas jana;\n2) Slow-moving stock jisse paisa atka rehta hai;\n3) Aas-paas ke naye dukandaron se margin competition.${hasDebt ? `\n4) Har mahine samay par ₹${formatCurrency(monthlyEmi)} ki EMI bharna.` : ''}`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `खुदरा (रिटेल) व्यवसाय में मुख्य जोखिम:\n1) ग्राहकों को अनियंत्रित उधारी देना जिससे कार्यशील पूंजी अटक जाती है; 2) लंबे समय तक माल न बिकना और इन्वेंटरी जाम होना; 3) स्थानीय प्रतिस्पर्धियों से मूल्य युद्ध (price competition)।${hasDebt ? `\n4) ₹${formatCurrency(monthlyEmi)} की बैंक किश्त का समय पर भुगतान।` : ''}`,
+        };
+      }
+      return {
+        answer: `For a retail store in ${location}, primary operational risks are:\n1) Excessive customer credit (udhaari) freezing your liquid working capital;\n2) Dead or slow-moving inventory locking up funds;\n3) Price competition from nearby wholesalers.${hasDebt ? `\n4) Servicing the ₹${formatCurrency(monthlyEmi)} monthly loan EMI.` : ''}`,
+      };
+    }
+
+    if (catProfile === 'manufacturing' || catProfile === 'garments') {
+      if (langMode === 'hinglish') {
+        return {
+          answer: `Manufacturing / workshop business mein mukhya risks:\n1) Machinery ka breakdown aur spare parts/repair me deri;\n2) Karigaron aur skilled labor ki kami;\n3) Raw material ki badhti keemat aur client se payment aane me deri.${hasDebt ? `\n4) Monthly ₹${formatCurrency(monthlyEmi)} ki EMI samay par nikalna.` : ''}`,
+        };
+      }
+      if (langMode === 'hi') {
+        return {
+          answer: `निर्माण/वर्कशॉप व्यवसाय में मुख्य जोखिम:\n1) मशीनरी खराबी और मरम्मत में देरी से उत्पादन रुकना; 2) कुशल कारीगरों की कमी; 3) कच्चे माल की कीमतों में वृद्धि और ग्राहकों से भुगतान में विलंब।${hasDebt ? `\n4) ₹${formatCurrency(monthlyEmi)} की मासिक बैंक EMI का भुगतान।` : ''}`,
+        };
+      }
+      return {
+        answer: `For a manufacturing/workshop business, key risks include:\n1) Machine breakdowns and maintenance delays halting production;\n2) Skilled technician availability;\n3) Raw material price inflation and delayed buyer receivables.${hasDebt ? `\n4) Servicing the ₹${formatCurrency(monthlyEmi)} monthly loan EMI on time.` : ''}`,
+      };
+    }
+
+    // Default / General
     if (langMode === 'hinglish') {
       return {
-        answer: `Is business mein sabse bade 3 practical risks yeh hain: 1) Udhaari (Customer Credit): Gaon/bazaar mein zyada udhar baantne se working capital fas sakta hai; 2) Kharche par control: Monthly expenses ₹${formatCurrency(effectiveExpenses)} se zyada na badhne dein; 3) Regular EMI: Har mahine pehle EMI ₹${formatCurrency(monthlyEmi)} alag rakhein. In teeno se bachne ke liye ₹25,000 ka cash reserve zaroor banayein.`,
+        answer: `Is business mein mukhya practical risks yeh hain:\n1) Grahakon ko bina limit udhari baantna jisse working capital fas jaye;\n2) Monthly operating expenses (₹${formatCurrency(effectiveExpenses)}) par control na hona;\n3) Grahakon se regular repeat orders na milna.${hasDebt ? `\n4) Har mahine pehle ₹${formatCurrency(monthlyEmi)} ki loan EMI alag rakhna.` : ''}\nInse bachne ke liye 1 mahine ka cash backup reserve zaroor banayein.`,
       };
     }
     if (langMode === 'hi') {
       return {
-        answer: `इस व्यवसाय में मुख्य रूप से 3 जोखिमों पर सतर्कता आवश्यक है: 1) ग्राहकों को अनियंत्रित उधारी देना जिससे कार्यशील पूंजी अटक सकती है; 2) मासिक परिचालन खर्चों (₹${formatCurrency(effectiveExpenses)}) का बजट से बाहर जाना; 3) किश्त (₹${formatCurrency(monthlyEmi)}) में देरी। शुरुआत से ही ₹25,000–₹50,000 का इमरजेंसी रिज़र्व फंड रखने से यह जोखिम न्यूनतम हो जाता है।`,
+        answer: `इस व्यवसाय में मुख्य व्यावहारिक जोखिम:\n1) अनियंत्रित उधारी देना जिससे कार्यशील पूंजी अटक जाए;\n2) मासिक परिचालन खर्चों (₹${formatCurrency(effectiveExpenses)}) का बजट से बाहर जाना;\n3) ग्राहकों की निरंतरता बनाए रखना।${hasDebt ? `\n4) ₹${formatCurrency(monthlyEmi)} की बैंक किश्त का समय पर भुगतान।` : ''}\nइनसे बचाव के लिए 1 माह का रिज़र्व फंड रखें।`,
       };
     }
     return {
-      answer: `The primary operational risks to guard against are: 1) Excessive customer credit (udhaari), which ties up working capital; 2) Cost creep on monthly operating expenses (currently estimated at ₹${formatCurrency(effectiveExpenses)}); 3) Irregular debt servicing on your ₹${formatCurrency(monthlyEmi)} EMI. Keeping a dedicated 1-month operating reserve mitigates these vulnerabilities.`,
+      answer: `The primary operational risks to guard against are:\n1) Excessive customer credit tying up working capital;\n2) Cost creep on monthly operating expenses (currently estimated at ₹${formatCurrency(effectiveExpenses)});\n3) Slower-than-expected repeat customer acquisition.${hasDebt ? `\n4) Servicing your ₹${formatCurrency(monthlyEmi)} monthly loan EMI.` : ''}\nKeeping a 1-month liquid cash reserve directly mitigates these vulnerabilities.`,
     };
   }
 
@@ -985,19 +1163,19 @@ export function getAdvisorAdvice(data: AdvisorRequest): { answer: string } {
     };
   }
 
-  // Fallback for conversational queries: Answer directly based on user's exact query words
+  // Fallback for conversational queries: Answer directly based on user's inquiry topic without template dumps
   if (langMode === 'hinglish') {
     return {
-      answer: `${businessName} ke liye aapka total project cost ₹${formatCurrency(projectCost)} hai, jismein ₹${formatCurrency(promoterMargin)} aapka margin aur ₹${formatCurrency(eligibleLoan)} eligible loan hai. Har mahine anumanit ₹${formatCurrency(monthlyProfit)} profit ke sath yeh business '${feasibility}' hai. Aap mujhse is sawaal se juda koi bhi specific hisab poochh sakte hain.`,
+      answer: `Aapke is sawaal ke sandarbh mein, ${businessName} ke liye sabse zaroori yeh hai ki operating expenses ko santulit rakhein aur cash flow par control banayein. Agar aap promoter margin badhane, setup cost kam karne, loan EMI ya kisi specific calculation ke baare mein janna chahte hain, to kripya seedhe poochhein!`,
     };
   }
   if (langMode === 'hi') {
     return {
-      answer: `${businessName} के लिए प्रोजेक्ट लागत ₹${formatCurrency(projectCost)}, प्रमोटर मार्जिन ₹${formatCurrency(promoterMargin)} और पात्र बैंक लोन ₹${formatCurrency(eligibleLoan)} है। ₹${formatCurrency(monthlyProfit)} के मासिक लाभ के साथ यह प्रोजेक्ट '${feasibility}' श्रेणी में है।`,
+      answer: `आपके इस प्रश्न के संदर्भ में, ${businessName} के लिए मुख्य प्राथमिकता परिचालन लागत को नियंत्रित रखना और नकद प्रवाह (cash flow) को सुदृढ़ बनाना है। यदि आप मार्जिन बढ़ाने के लाभ-हानि, सेटअप लागत घटाने, बैंक EMI या विशिष्ट जोखिमों के बारे में जानना चाहते हैं, तो कृपया पूछें।`,
     };
   }
   return {
-    answer: `For ${businessName}, your estimated project cost is ₹${formatCurrency(projectCost)} (requiring ₹${formatCurrency(promoterMargin)} margin and ₹${formatCurrency(eligibleLoan)} eligible loan under ${schemeName}). With an estimated net profit of ₹${formatCurrency(monthlyProfit)}/month and '${feasibility}' rating, please ask any specific financial, loan, or market question.`,
+    answer: `Regarding your question for ${businessName}: In this business, the key priority is managing operating expenses and maintaining liquid working capital. If you would like specific advice on lowering setup costs, promoter margin trade-offs, loan repayment, or sector risks, please feel free to ask!`,
   };
 }
 

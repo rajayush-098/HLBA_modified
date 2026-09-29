@@ -304,8 +304,8 @@ export default function PageMarket({
               <Loader2 size={16} className="spinning-icon" />
               <span>
                 {isHi
-                  ? `फ़ील्ड डेटा (${localMarketData?.competitors || 0} प्रतिद्वंदी, ${localMarketData?.banks || 0} बैंक) के आधार पर सलाह तैयार हो रही है...`
-                  : `Generating advisory based on ${localMarketData?.competitors || 0} competitors and ${localMarketData?.banks || 0} banks...`}
+                  ? `फ़ील्ड डेटा (${localMarketData?.competitorsCount ?? (Array.isArray(localMarketData?.competitors) ? localMarketData.competitors.length : (localMarketData?.competitors || 0))} प्रतिद्वंदी, ${localMarketData?.banksCount ?? (Array.isArray(localMarketData?.banks) ? localMarketData.banks.length : (localMarketData?.banks || 0))} बैंक) के आधार पर सलाह तैयार हो रही है...`
+                  : `Generating advisory based on ${localMarketData?.competitorsCount ?? (Array.isArray(localMarketData?.competitors) ? localMarketData.competitors.length : (localMarketData?.competitors || 0))} competitors and ${localMarketData?.banksCount ?? (Array.isArray(localMarketData?.banks) ? localMarketData.banks.length : (localMarketData?.banks || 0))} banks...`}
               </span>
             </div>
           ) : (

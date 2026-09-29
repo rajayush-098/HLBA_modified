@@ -627,12 +627,11 @@ When advising the user, actively use the real-time market data. If they ask abou
           history: conversationHistory,
         });
 
-        const locationLabel = [ctx.district, ctx.state].filter(Boolean).join(", ") || (isHi ? "स्थानीय क्षेत्र" : "Local Area");
         const fallbackAnswer =
           fallbackResp?.answer ||
           (isHi
-            ? `प्रोफाइल: ${ctx.businessName || "व्यवसाय"}, ${locationLabel}\nयोजना: ${ctx.matchedScheme || "सरकारी योजना"}\n${ctx.promoterMargin != null ? `मार्जिन: ₹${Number(ctx.promoterMargin).toLocaleString("en-IN")} | ` : ""}${ctx.eligibleLoan != null ? `बैंक लोन: ₹${Number(ctx.eligibleLoan).toLocaleString("en-IN")} | ` : ""}${ctx.monthlyEmi != null ? `EMI: ₹${Number(ctx.monthlyEmi).toLocaleString("en-IN")}` : ""}\n\nव्यापार सलाह: अपने शुरुआती निवेश को सीमित रखने के लिए उपकरण चरणबद्ध तरीके से खरीदें। क्रेडिट लिंक्ड सरकारी योजना के तहत मिलने वाली पूंजीगत सहायता से अपने कार्यशील पूंजी मार्जिन को सुरक्षित रखें।`
-            : `Profile: ${ctx.businessName || "Business"}, ${locationLabel}\nMatched Scheme: ${ctx.matchedScheme || "Credit Scheme"}\n${ctx.promoterMargin != null ? `Margin: ₹${Number(ctx.promoterMargin).toLocaleString("en-IN")} | ` : ""}${ctx.eligibleLoan != null ? `Loan: ₹${Number(ctx.eligibleLoan).toLocaleString("en-IN")} | ` : ""}${ctx.monthlyEmi != null ? `EMI: ₹${Number(ctx.monthlyEmi).toLocaleString("en-IN")}` : ""}\n\nBusiness Advice: Phase your machinery procurement to reduce upfront capital requirements, and leverage credit-linked capital assistance to maintain positive cash flow.`);
+            ? `व्यापार सलाह: अपने शुरुआती निवेश को सीमित रखने के लिए उपकरण चरणबद्ध तरीके से खरीदें। क्रेडिट लिंक्ड सरकारी योजना के तहत मिलने वाली पूंजीगत सहायता से अपने कार्यशील पूंजी मार्जिन को सुरक्षित रखें।`
+            : `Business Advice: Phase your machinery procurement to reduce upfront capital requirements, and leverage credit-linked capital assistance to maintain positive cash flow.`);
 
         finalReply = fallbackAnswer;
 

@@ -138,7 +138,7 @@ export default function HyperLocalScanner({
   // Scan items
   const [competitors, setCompetitors] = useState(Array.isArray(scannedData?.competitors) ? scannedData.competitors : []);
   const [banks, setBanks] = useState(Array.isArray(scannedData?.banks) ? scannedData.banks : []);
-  const [mandis, setMandis] = useState(Array.isArray(scannedData?.mandis) ? scannedData.mandis : []);
+  const [mandis, setMandis] = useState(Array.isArray(scannedData?.mandis) ? scannedData.mandis : (Array.isArray(scannedData?.markets) ? scannedData.markets : []));
 
   // Metric summaries
   const [nearestBank, setNearestBank] = useState(scannedData?.nearestBank || null);
@@ -177,13 +177,17 @@ export default function HyperLocalScanner({
   // Process raw elements and calculate distances
   const processElements = useCallback(
     (elements, centerLat, centerLng) => {
+      const safeElements = Array.isArray(elements) ? elements : [];
+
       // Filter for banks
-      const foundBanks = elements
-        .filter((el) => el.tags && el.tags.amenity === "bank")
+      const foundBanks = safeElements
+        .filter((el) => el && el.tags && el.tags.amenity === "bank")
         .map((el, idx) => {
           const lat = el.lat ?? el.center?.lat;
           const lon = el.lon ?? el.center?.lon;
-          const distKm = lat && lon ? calculateHaversineDistance(centerLat, centerLng, lat, lon) : 0;
+          const distKm = lat != null && lon != null && !isNaN(lat) && !isNaN(lon)
+            ? calculateHaversineDistance(centerLat, centerLng, lat, lon)
+            : 0;
           const tags = el.tags || {};
           const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || `Bank #${idx + 1}`;
           return {
@@ -197,15 +201,17 @@ export default function HyperLocalScanner({
             type: "bank",
           };
         })
-        .filter((b) => b.lat && b.lon);
+        .filter((b) => b.lat != null && b.lon != null && !isNaN(b.lat) && !isNaN(b.lon));
 
       // Filter for mandis/marketplaces/warehouses
-      const foundMandis = elements
-        .filter((el) => el.tags && (el.tags.amenity === "marketplace" || el.tags.building === "warehouse"))
+      const foundMandis = safeElements
+        .filter((el) => el && el.tags && (el.tags.amenity === "marketplace" || el.tags.building === "warehouse"))
         .map((el, idx) => {
           const lat = el.lat ?? el.center?.lat;
           const lon = el.lon ?? el.center?.lon;
-          const distKm = lat && lon ? calculateHaversineDistance(centerLat, centerLng, lat, lon) : 0;
+          const distKm = lat != null && lon != null && !isNaN(lat) && !isNaN(lon)
+            ? calculateHaversineDistance(centerLat, centerLng, lat, lon)
+            : 0;
           const tags = el.tags || {};
           const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || `Mandi / Warehouse #${idx + 1}`;
           return {
@@ -219,15 +225,17 @@ export default function HyperLocalScanner({
             type: "market",
           };
         })
-        .filter((m) => m.lat && m.lon);
+        .filter((m) => m.lat != null && m.lon != null && !isNaN(m.lat) && !isNaN(m.lon));
 
       // Filter for competitors (any shop matching the category query)
-      const foundShops = elements
-        .filter((el) => el.tags && el.tags.shop)
+      const foundShops = safeElements
+        .filter((el) => el && el.tags && el.tags.shop)
         .map((el, idx) => {
           const lat = el.lat ?? el.center?.lat;
           const lon = el.lon ?? el.center?.lon;
-          const distKm = lat && lon ? calculateHaversineDistance(centerLat, centerLng, lat, lon) : 0;
+          const distKm = lat != null && lon != null && !isNaN(lat) && !isNaN(lon)
+            ? calculateHaversineDistance(centerLat, centerLng, lat, lon)
+            : 0;
           const tags = el.tags || {};
           const name = tags.name || tags["name:en"] || tags["name:hi"] || el.name || `Shop #${idx + 1}`;
           return {
@@ -241,11 +249,11 @@ export default function HyperLocalScanner({
             type: "competitor",
           };
         })
-        .filter((s) => s.lat && s.lon);
+        .filter((s) => s.lat != null && s.lon != null && !isNaN(s.lat) && !isNaN(s.lon));
 
-      foundShops.sort((a, b) => a.distKm - b.distKm);
-      foundBanks.sort((a, b) => a.distKm - b.distKm);
-      foundMandis.sort((a, b) => a.distKm - b.distKm);
+      foundShops.sort((a, b) => (a.distKm ?? 0) - (b.distKm ?? 0));
+      foundBanks.sort((a, b) => (a.distKm ?? 0) - (b.distKm ?? 0));
+      foundMandis.sort((a, b) => (a.distKm ?? 0) - (b.distKm ?? 0));
 
       // Safely update state
       setBanks(foundBanks);
@@ -258,22 +266,6 @@ export default function HyperLocalScanner({
       const closestMarket = foundMandis.length > 0 ? foundMandis[0] : null;
       setNearestBank(closestBank);
       setNearestMarket(closestMarket);
-
-      // Send live market intelligence to parent component
-      const callback = onScanComplete || onScanCompleteRef?.current;
-      if (typeof callback === "function") {
-        callback({
-          status: "success",
-          competitors: foundShops.length,
-          competitorsCount: foundShops.length,
-          banks: foundBanks.length,
-          banksCount: foundBanks.length,
-          mandis: foundMandis.length,
-          mandisCount: foundMandis.length,
-          nearestBankDist: closestBank?.distKm ?? null,
-          nearestMarketDist: closestMarket?.distKm ?? null,
-        });
-      }
 
       const compCount = foundShops.length;
       let calculatedSatScore = isHi
@@ -299,13 +291,14 @@ export default function HyperLocalScanner({
       return {
         competitors: foundShops,
         banks: foundBanks,
+        mandis: foundMandis,
         markets: foundMandis,
         closestBank,
         closestMarket,
         calculatedSatScore,
       };
     },
-    [isHi, onScanComplete]
+    [isHi]
   );
 
   // Dynamic Radius Fetching from Overpass API - Real fetch with dynamic coordinates & category filter
@@ -402,24 +395,54 @@ out center;
 
         console.log("Response Status:", response?.status);
 
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonErr) {
+          throw new Error(`Data processing error: Invalid response format received from map server (${jsonErr?.message || "JSON parse failed"})`, { cause: jsonErr });
+        }
+
+        if (!data || typeof data !== "object") {
+          throw new Error("Data processing error: Map service returned an empty or invalid payload");
+        }
+
+        if (data.remark && (!data.elements || data.elements.length === 0)) {
+          throw new Error(`Map service query error: ${data.remark}`);
+        }
+
         const rawElements = Array.isArray(data.elements) ? data.elements : [];
         console.log("Overpass Elements Received:", rawElements.length);
 
         // Process elements array in try block
-        const processed = processElements(rawElements, centerLat, centerLng);
+        let processed;
+        try {
+          processed = processElements(rawElements, centerLat, centerLng);
+        } catch (procErr) {
+          console.error("HyperLocalScanner data processing error:", procErr);
+          throw new Error(`Data processing error: ${procErr?.message || "Failed to process map elements"}`, { cause: procErr });
+        }
+
         setHasScanned(true);
         setScannedCenter([centerLat, centerLng]);
 
+        const processedCompetitors = Array.isArray(processed?.competitors) ? processed.competitors : [];
+        const processedBanks = Array.isArray(processed?.banks) ? processed.banks : [];
+        const processedMandis = Array.isArray(processed?.mandis)
+          ? processed.mandis
+          : (Array.isArray(processed?.markets) ? processed.markets : []);
+
+        const competitorsCount = processedCompetitors.length;
+        const banksCount = processedBanks.length;
+        const mandisCount = processedMandis.length;
+
         // Export data to parent through ref callback
-        if (typeof onScanCompleteRef.current === "function" && processed) {
+        if (typeof onScanCompleteRef.current === "function") {
           const radiusKmNum = radius / 1000;
-          const competitorsCount = processed.competitors.length;
-          const nearestBankDist = processed.closestBank ? `${processed.closestBank.distKm}km` : "unknown";
-          const nearestMarketDist = processed.closestMarket ? `${processed.closestMarket.distKm}km` : "unknown";
+          const nearestBankDist = processed?.closestBank ? `${processed.closestBank.distKm}km` : "unknown";
+          const nearestMarketDist = processed?.closestMarket ? `${processed.closestMarket.distKm}km` : "unknown";
 
           const summaryString = `Local Market Context (${radiusKmNum}km radius): ${competitorsCount} competitors, nearest bank is ${nearestBankDist} away${
-            processed.closestMarket ? `, nearest marketplace/warehouse is ${nearestMarketDist} away (${processed.closestMarket.name})` : ""
+            processed?.closestMarket ? `, nearest marketplace/warehouse is ${nearestMarketDist} away (${processed.closestMarket.name})` : ""
           }.${radius >= 25000 ? " Region identified as Deep Rural (First-Mover Advantage)." : ""}`;
 
           if (lastEmittedSummaryRef.current !== summaryString) {
@@ -432,14 +455,14 @@ out center;
               radiusKm: radiusKmNum,
               isDeepRural: radius >= 25000,
               competitorsCount,
-              competitors: processed.competitors,
-              banksCount: processed.banks.length,
-              banks: processed.banks,
-              mandisCount: processed.mandis.length,
-              mandis: processed.mandis,
-              nearestBank: processed.closestBank ? { name: processed.closestBank.name, distKm: processed.closestBank.distKm } : null,
-              nearestMarket: processed.closestMarket ? { name: processed.closestMarket.name, distKm: processed.closestMarket.distKm } : null,
-              marketSaturationScore: processed.calculatedSatScore,
+              competitors: processedCompetitors,
+              banksCount,
+              banks: processedBanks,
+              mandisCount,
+              mandis: processedMandis,
+              nearestBank: processed?.closestBank ? { name: processed.closestBank.name, distKm: processed.closestBank.distKm } : null,
+              nearestMarket: processed?.closestMarket ? { name: processed.closestMarket.name, distKm: processed.closestMarket.distKm } : null,
+              marketSaturationScore: processed?.calculatedSatScore || "",
               summaryString,
               scannedAt: new Date().toISOString(),
             });
@@ -449,10 +472,21 @@ out center;
         console.error("HyperLocalScanner executeScan error:", err);
         const detailedError = err?.message || "Overpass API temporarily unavailable";
         setScanError(detailedError);
+
+        const isDataProcessingError =
+          detailedError.includes("Data processing error") ||
+          detailedError.includes("JSON parse failed") ||
+          detailedError.includes("Cannot read") ||
+          detailedError.includes("invalid payload");
+
         setErrorMessage(
-          isHi
-            ? `मानचित्र सेवा से संपर्क नहीं हो सका: ${detailedError}`
-            : `Could not reach map service: ${detailedError}`
+          isDataProcessingError
+            ? (isHi
+                ? `डेटा संसाधित करने में समस्या: ${detailedError}`
+                : `Error processing map data: ${detailedError}`)
+            : (isHi
+                ? `मानचित्र सेवा से संपर्क नहीं हो सका: ${detailedError}`
+                : `Could not reach map service: ${detailedError}`)
         );
 
         if (typeof onScanCompleteRef.current === "function") {
@@ -541,10 +575,14 @@ out center;
     await executeScan(rad, targetLat, targetLng);
   };
 
+  const safeCompetitors = Array.isArray(competitors) ? competitors : [];
+  const safeBanks = Array.isArray(banks) ? banks : [];
+  const safeMandis = Array.isArray(mandis) ? mandis : [];
+
   const mapCenter = scannedCenter || (activeLat != null && activeLng != null ? [activeLat, activeLng] : null);
-  const displayedCompetitors = activeFilter === "all" || activeFilter === "competitors" ? competitors : [];
-  const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? banks : [];
-  const displayedMarkets = activeFilter === "all" || activeFilter === "markets" ? mandis : [];
+  const displayedCompetitors = activeFilter === "all" || activeFilter === "competitors" ? safeCompetitors : [];
+  const displayedBanks = activeFilter === "all" || activeFilter === "banks" ? safeBanks : [];
+  const displayedMarkets = activeFilter === "all" || activeFilter === "markets" ? safeMandis : [];
 
   return (
     <div
@@ -640,6 +678,9 @@ out center;
                 type="button"
                 onClick={() => {
                   setSearchRadius(rad);
+                  if (hasScanned) {
+                    handleScan(rad);
+                  }
                 }}
                 disabled={isLoading}
                 style={{
@@ -833,7 +874,7 @@ out center;
               color: activeFilter === "all" ? "#1e40af" : "#475569",
             }}
           >
-            {isHi ? "सभी दिखाएँ" : "All Resources"} ({competitors.length + banks.length + mandis.length})
+            {isHi ? "सभी दिखाएँ" : "All Resources"} ({safeCompetitors.length + safeBanks.length + safeMandis.length})
           </button>
 
           <button
@@ -851,7 +892,7 @@ out center;
             }}
           >
             <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#dc2626", marginRight: "5px" }}></span>
-            {isHi ? "प्रतिद्वंदी" : "Competitors"} ({competitors.length})
+            {isHi ? "प्रतिद्वंदी" : "Competitors"} ({safeCompetitors.length})
           </button>
 
           <button
@@ -869,7 +910,7 @@ out center;
             }}
           >
             <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#16a34a", marginRight: "5px" }}></span>
-            {isHi ? "बैंक व वित्त" : "Banks"} ({banks.length})
+            {isHi ? "बैंक व वित्त" : "Banks"} ({safeBanks.length})
           </button>
 
           <button
@@ -887,7 +928,7 @@ out center;
             }}
           >
             <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#2563eb", marginRight: "5px" }}></span>
-            {isHi ? "मंडी व गोदाम" : "Mandis / Warehouses"} ({mandis.length})
+            {isHi ? "मंडी व गोदाम" : "Mandis / Warehouses"} ({safeMandis.length})
           </button>
         </div>
 
@@ -1154,11 +1195,11 @@ out center;
                 ? "अभी स्कैन नहीं हुआ"
                 : "Not scanned yet"
               : marketSaturationScore ||
-                (competitors.length === 0
+                (safeCompetitors.length === 0
                   ? isHi
                     ? "स्कैन पूरा — 0 प्रतिद्वंदी मिले"
                     : "Scan completed — 0 competitors found"
-                  : `${competitors.length} ${isHi ? "प्रतिस्पर्धी मिले" : "Competitors Found"}`)}
+                  : `${safeCompetitors.length} ${isHi ? "प्रतिस्पर्धी मिले" : "Competitors Found"}`)}
           </div>
 
           <div style={{ fontSize: "12px", color: "#64748b" }}>
@@ -1166,10 +1207,10 @@ out center;
               <span>{isHi ? "स्थानीय दुकानों का विवरण खोजा जा रहा है..." : "Scanning local businesses..."}</span>
             ) : !hasScanned ? (
               <span>{isHi ? "प्रतिस्पर्धियों की वास्तविक संख्या देखने के लिए 'स्कैन एरिया' पर क्लिक करें।" : "Click 'Scan Area' to analyze nearby competitors."}</span>
-            ) : competitors.length === 0 ? (
+            ) : safeCompetitors.length === 0 ? (
               <span>{isHi ? `${searchRadius / 1000} किमी दायरे में कोई समान दुकान नहीं मिली (प्रथम प्रस्तावक लाभ)।` : `Scan completed — 0 competitors found in ${searchRadius / 1000}km (First-Mover Advantage).`}</span>
             ) : (
-              <span>{isHi ? `${searchRadius / 1000} किमी के दायरे में ${competitors.length} प्रतिस्पर्धी इकाइयाँ सक्रिय हैं।` : `${competitors.length} similar businesses operating within ${searchRadius / 1000}km radius.`}</span>
+              <span>{isHi ? `${searchRadius / 1000} किमी के दायरे में ${safeCompetitors.length} प्रतिस्पर्धी इकाइयाँ सक्रिय हैं।` : `${safeCompetitors.length} similar businesses operating within ${searchRadius / 1000}km radius.`}</span>
             )}
           </div>
 
@@ -1354,7 +1395,7 @@ out center;
               ? isHi
                 ? "स्थान का विश्लेषण शुरू करने के लिए ऊपर 'स्कैन एरिया' पर क्लिक करें। लाइव फील्ड डेटा मिलते ही यहाँ सटीक सलाह दिखाई देगी।"
                 : "Click 'Scan Area' above to analyze your local market infrastructure and competition. Real-time guidance will appear here."
-              : competitors.length <= 2
+              : safeCompetitors.length <= 2
               ? isHi
                 ? "इलाके में कम दुकानें हैं, इसलिए सीधे ग्राहक सेवा और ताज़गी के दम पर बाज़ार में एकाधिकार बनाया जा सकता है।"
                 : "Low competition density gives strong pricing power and room for rapid customer acquisition."
