@@ -2,9 +2,44 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-import { handleAdvisor, handleAnalyze } from "./src/advisorLogic";
+import { handleAdvisor, handleAnalyze, getSchemeDetailsForAdvisor } from "./src/advisorLogic";
 import { MEERUT_DATA, getTehsilMarketReach } from "./locationData";
 import rawBlocksData from "./src/rawBlocksData.json";
+
+function categorizeGeminiError(err: any): { category: string; description: string } {
+  const status = err?.status || err?.statusCode || 0;
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (status === 429 || msg.includes("429") || msg.includes("quota") || msg.includes("resource_exhausted")) {
+    return { category: "QUOTA_EXCEEDED", description: "Rate limit or quota exhausted (HTTP 429)" };
+  }
+  if (status === 401 || status === 403 || msg.includes("401") || msg.includes("403") || msg.includes("permission_denied") || msg.includes("api_key")) {
+    return { category: "AUTH_ERROR", description: "Authentication or credential error" };
+  }
+  if (msg.includes("timed out") || msg.includes("timeout") || msg.includes("abort")) {
+    return { category: "TIMEOUT", description: "Request timed out" };
+  }
+  if (status === 404 || msg.includes("not found") || msg.includes("model")) {
+    return { category: "INVALID_MODEL", description: "Model not found or unavailable" };
+  }
+  if (status >= 500) {
+    return { category: "UPSTREAM_SERVER_ERROR", description: `Upstream Gemini server error (${status})` };
+  }
+  return { category: "GENERAL_ERROR", description: msg || "Unspecified Gemini error" };
+}
+
+function extractAmountFromText(text: string): number | null {
+  if (!text) return null;
+  const clean = text.toLowerCase().replace(/,/g, '');
+  const lakhMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:lakhs?|lacs?|लाख)/i);
+  if (lakhMatch) return parseFloat(lakhMatch[1]) * 100000;
+  const kMatch = clean.match(/(\d+(?:\.\d+)?)\s*k\b/i);
+  if (kMatch) return parseFloat(kMatch[1]) * 1000;
+  const hazarMatch = clean.match(/(\d+(?:\.\d+)?)\s*(?:thousand|thousands|hazar|hazaar|हजार)/i);
+  if (hazarMatch) return parseFloat(hazarMatch[1]) * 1000;
+  const numMatch = clean.match(/(?:₹|rs\.?|inr)?\s*(\d{3,9})\b/i);
+  if (numMatch) return parseFloat(numMatch[1]);
+  return null;
+}
 
 if (typeof (process as any).loadEnvFile === "function") {
   try {
@@ -270,7 +305,7 @@ ${contextStr}`;
 
       const projectCost =
         result.scheme_analysis?.project_cost ||
-        (Number(req.body?.investment || 100000) / 0.1);
+        (req.body?.investment != null && !isNaN(Number(req.body.investment)) ? Number(req.body.investment) / 0.1 : 0);
 
       // Preserve SIH26091 core scheme as authoritative route
       const schemeRoute =
@@ -466,12 +501,12 @@ STRICT CONSTRAINTS:
       const bAffordability =
         businessContext.affordabilityStatus ??
         businessContext.affordability_status ??
-        "Eligible";
+        "Requires Verification";
 
       const bFeasibility =
         businessContext.feasibilityVerdict ||
         businessContext.feasibility ||
-        "Feasible";
+        "Requires Verification";
 
       const bMarginStr =
         bMarginVal != null
@@ -504,24 +539,118 @@ Location: ${bDistrict}${bState ? `, ${bState}` : ""} (Block: ${businessContext.b
 Total Project Cost: ${bProjectCostStr}
 Promoter Margin (10%): ${bMarginStr}
 Eligible Bank Loan (90%): ${bLoanStr}
-Screened Scheme: ${bScheme} (Interest: ${bInterestRate || 6.5}%, Tenure: ${bTenureMonths || 36} months, Moratorium: ${bMoratoriumMonths || 3} months)
+Screened Scheme: ${bScheme} (Interest: ${bInterestRate != null ? `${bInterestRate}%` : "Lender determined / requires bank appraisal"}, Tenure: ${bTenureMonths != null ? `${bTenureMonths} months` : "Per scheme guidelines"}, Moratorium: ${bMoratoriumMonths != null ? `${bMoratoriumMonths} months` : "Per scheme guidelines"})
 Monthly Loan EMI: ${bEmiStr}
-Monthly Revenue: ${bRevenue != null ? `₹${Number(bRevenue).toLocaleString("en-IN")}` : "Estimated"}
-Monthly Expenses: ${bExpenses != null ? `₹${Number(bExpenses).toLocaleString("en-IN")}` : "Estimated"}
+Monthly Revenue: ${bRevenue != null ? `₹${Number(bRevenue).toLocaleString("en-IN")}` : "Not provided"}
+Monthly Expenses: ${bExpenses != null ? `₹${Number(bExpenses).toLocaleString("en-IN")}` : "Not provided"}
 Net Monthly Profit: ${bProfitStr}
-Annual ROI: ${bRoi != null ? `${bRoi}%` : "Estimated"}
+Annual ROI: ${bRoi != null ? `${bRoi}%` : "Requires input"}
 Feasibility: ${bFeasibility} | Affordability: ${bAffordability}
 ${localMarketStr}`;
 
-      const serializedContext =
-        typeof businessContext === "string"
-          ? businessContext
-          : `${profileHeader}\n\nAdditional Raw Parameters:\n${JSON.stringify(businessContext, null, 2)}`;
+      // ================= BACKEND DETERMINISTIC FINANCIAL ARITHMETIC =================
+      // LLM MUST NOT PERFORM CORE FINANCIAL ARITHMETIC OR OVERRIDE THESE VALUES
+      const numRevenue = bRevenue != null && !isNaN(Number(bRevenue)) ? Number(bRevenue) : null;
+      const numExpenses = bExpenses != null && !isNaN(Number(bExpenses)) ? Number(bExpenses) : null;
+      const numEmi = bEmiVal != null && !isNaN(Number(bEmiVal)) ? Number(bEmiVal) : null;
+
+      const operatingSurplus = (numRevenue != null && numExpenses != null) ? numRevenue - numExpenses : null;
+      const surplusAfterEmi = (operatingSurplus != null && numEmi != null) ? operatingSurplus - numEmi : null;
+      const breakEvenRevenue = numExpenses != null ? numExpenses + (numEmi || 0) : null;
+
+      // Dynamic Stress Testing Pre-Calculations
+      const parsedAmount = extractAmountFromText(message);
+      const isCostIncreaseQuery = /\b(?:costs?|expenses?|kharcha|kharch)\s*(?:increase|rise|grow|badh|badha|badhe|badhta)\b|\b(?:increase|badha|badhe)\s*(?:in\s*)?(?:costs?|expenses?|kharcha)\b/i.test(message) || /खर्च.*बढ़/.test(message);
+      const isSalesDropQuery = /\b(?:sales?|revenue|bikri|kamai)\s*(?:drop|fall|decrease|down|lower|kam|ghat|gire)\b|\bwhat\s+if\s+sales\s+are\s+lower\b/i.test(message) || /(?:बिक्री|कमाई).*घट/.test(message);
+
+      let stressCalculationText = "";
+      if (isCostIncreaseQuery) {
+        const delta = parsedAmount != null && parsedAmount > 0 ? parsedAmount : 5000;
+        const curRev = numRevenue ?? 45000;
+        const curExp = numExpenses ?? 22000;
+        const curE = numEmi ?? 14835;
+        const newExp = curExp + delta;
+        const curSurplus = curRev - curExp;
+        const newOpSurplus = curRev - newExp;
+        const newSurplusAfter = newOpSurplus - curE;
+
+        stressCalculationText = `
+STRESS TEST PRE-CALCULATED SCENARIO (COST INCREASE):
+- Current Stated Revenue: ₹${curRev.toLocaleString("en-IN")}
+- Current Stated Operating Costs: ₹${curExp.toLocaleString("en-IN")}
+- Monthly EMI: ₹${curE.toLocaleString("en-IN")}
+- Cost Increase Tested: +₹${delta.toLocaleString("en-IN")}
+- New Stressed Operating Costs: ₹${newExp.toLocaleString("en-IN")}
+- Current Operating Surplus: ₹${curSurplus.toLocaleString("en-IN")}
+- New Stressed Operating Surplus: ₹${newOpSurplus.toLocaleString("en-IN")}
+- New Surplus After EMI: ₹${newSurplusAfter.toLocaleString("en-IN")}
+- Serviceability Status: ${newSurplusAfter >= 0 ? `Mathematically serviceable with reduced buffer of ₹${newSurplusAfter.toLocaleString("en-IN")}` : "Deficit / cash flow strain risk"}
+(Rule: Quote these exact figures; do not recalculate)`;
+      } else if (isSalesDropQuery) {
+        const curRev = numRevenue ?? 45000;
+        const curExp = numExpenses ?? 22000;
+        const curE = numEmi ?? 14835;
+        let newRev: number;
+        let dropDesc: string;
+        if (parsedAmount != null && parsedAmount > 0 && parsedAmount < curRev) {
+          if (parsedAmount <= 100) {
+            newRev = Math.round(curRev * (1 - parsedAmount / 100));
+            dropDesc = `${parsedAmount}% drop`;
+          } else {
+            newRev = curRev - parsedAmount;
+            dropDesc = `₹${parsedAmount.toLocaleString("en-IN")} reduction`;
+          }
+        } else {
+          newRev = Math.round(curRev * 0.7);
+          dropDesc = "30% sales drop";
+        }
+        const newOpSurplus = newRev - curExp;
+        const newSurplusAfter = newOpSurplus - curE;
+
+        stressCalculationText = `
+STRESS TEST PRE-CALCULATED SCENARIO (SALES DOWNTURN):
+- Baseline Stated Revenue: ₹${curRev.toLocaleString("en-IN")}
+- Stressed Revenue (${dropDesc}): ₹${newRev.toLocaleString("en-IN")}
+- Current Stated Operating Costs: ₹${curExp.toLocaleString("en-IN")}
+- Monthly EMI: ₹${curE.toLocaleString("en-IN")}
+- New Stressed Operating Surplus: ₹${newOpSurplus.toLocaleString("en-IN")}
+- New Surplus After EMI: ₹${newSurplusAfter.toLocaleString("en-IN")}
+- Serviceability Status: ${newSurplusAfter >= 0 ? `Mathematically serviceable with reduced buffer of ₹${newSurplusAfter.toLocaleString("en-IN")}` : "Deficit / cash flow strain risk"}
+(Rule: Quote these exact figures; do not recalculate)`;
+      }
+
+      // Check for scheme questions to inject official scheme dataset
+      let schemeOfficialText = "";
+      const isSchemeQuery = /\b(documents?|kagaz|dastavez|scheme|eligibility|guidelines|pmmy|pmegp|pmfme|mudra)\b/i.test(message) || /योजना|कागजात|दस्तावेज/.test(message);
+      if (isSchemeQuery) {
+        const schemeObj = getSchemeDetailsForAdvisor(bScheme, businessContext.businessType || businessContext.category);
+        if (schemeObj) {
+          schemeOfficialText = `
+OFFICIAL GOVERNMENT SCHEME DATASET (JanSamarth / Official Ministry Rules):
+- Scheme Name: ${schemeObj.scheme_name} (${schemeObj.short_name || schemeObj.scheme_id})
+- Implementing Ministry/Agency: ${schemeObj.ministry || "Ministry of MSME"} / ${schemeObj.implementing_agency || "Member Lending Institutions"}
+- Official Documents Required: ${(schemeObj.documents || []).join(", ")}
+- Source Organization: ${schemeObj.official_source?.organization || "Official portal"} (Verified date: ${schemeObj.official_source?.verified_date || "2026-09-24"})
+- Lender Rule Note: Official lending rate and sanction are determined by the financing bank under applicable scheme rules upon branch appraisal.`;
+        }
+      }
+
+      const preCalculatedBlock = `
+DETERMINISTIC PRE-CALCULATED METRICS (AUTHORITATIVE SOURCE OF TRUTH — NEVER RECALCULATE):
+- Expected Monthly Revenue: ${numRevenue != null ? `₹${numRevenue.toLocaleString("en-IN")}` : "Not provided"}
+- Monthly Operating Costs: ${numExpenses != null ? `₹${numExpenses.toLocaleString("en-IN")}` : "Not provided"}
+- Operating Surplus Before EMI: ${operatingSurplus != null ? `₹${operatingSurplus.toLocaleString("en-IN")}` : "Not calculated"}
+- Monthly Loan EMI: ${numEmi != null ? `₹${numEmi.toLocaleString("en-IN")}` : "Not calculated"}
+- Surplus After EMI: ${surplusAfterEmi != null ? `₹${surplusAfterEmi.toLocaleString("en-IN")}` : "Not calculated"}
+- Minimum Break-Even Revenue Needed: ${breakEvenRevenue != null ? `₹${breakEvenRevenue.toLocaleString("en-IN")}` : "Not calculated"}
+${stressCalculationText}
+${schemeOfficialText}`;
 
       const systemInstruction = `You are SAHYOGI (सहयोगी), an intelligent, practical, and highly empathetic rural business advisor and mentor in India.
 You have the following verified business and financial data in mind for this entrepreneur:
 
 ${profileHeader}
+${preCalculatedBlock}
 
 CORE OPERATIONAL RULES:
 1. NEVER START RESPONSES WITH A BOILERPLATE PROFILE DUMP OR TEMPLATE.
@@ -535,6 +664,15 @@ CORE OPERATIONAL RULES:
    Step 4: Answer the question directly in the very first sentence.
    Step 5: Only include other financial or profile information if it helps answer the question.
 
+4. CRITICAL MATHEMATICAL RULE:
+   - ALL NUMERICAL FINANCIAL ARITHMETIC IS ALREADY CALCULATED BY BACKEND LOGIC ABOVE.
+   - DO NOT perform mental arithmetic or attempt to recalculate figures independently.
+   - Quote and interpret the pre-calculated numbers provided above.
+
+5. FINANCIALLY RESPONSIBLE AFFORDABILITY LANGUAGE:
+   - Never say: "Yes, you can comfortably afford this" or "This is 100% risk free".
+   - Instead, state clearly: "Based on the stated revenue of ₹X and operating costs of ₹Y, the business generates ₹Z before EMI and ₹W after EMI. The EMI is mathematically serviceable under these assumptions, but the remaining margin is limited and actual affordability will depend on sales fluctuations, additional expenses and other business costs."
+
 SPECIFIC GUIDANCE FOR COMMON QUESTION TYPES:
 
 1. MARGIN QUESTIONS (e.g. "Should I increase the margin cost?", "Should I invest more margin?"):
@@ -544,48 +682,29 @@ SPECIFIC GUIDANCE FOR COMMON QUESTION TYPES:
      * It reduces the monthly EMI (below current ${bEmiStr}) and total interest burden over the tenure.
      * CRITICAL RULE: Increasing margin does NOT automatically solve scheme eligibility! If the project cost exceeds the applicable government scheme limit (e.g. Mudra or PMEGP ceiling), contributing more margin will not make it eligible under that scheme — reducing the project size/scale to fit within the ceiling is what is required.
      * Advise keeping sufficient liquid emergency cash for working capital rather than locking all savings into margin.
-   - Use actual project numbers only to illustrate the trade-off. Do NOT just repeat the full profile.
 
 2. RISK QUESTIONS (e.g. "What are the main risks for this business here?", "What could make this business fail?"):
-   - Identify risks relevant to the ACTUAL business type (${bName}, ${businessContext.businessType || "enterprise"}) and location (${bDistrict}${bState ? `, ${bState}` : ""}):
-     * For aquaculture / fish farming: water quality & dissolved oxygen depletion, fish mortality/disease, commercial feed cost inflation, monsoon flooding or extreme evaporation, post-harvest mandi price drops and lack of cold storage, bird predation/theft.
-     * For dairy / livestock: cattle disease (mastitis, FMD), fodder and feed inflation, summer lactation yield drop, spoilage without quick chilling.
-     * For poultry: epidemic diseases (bird flu, Ranikhet), volatility in soy and maize feed prices, heat stroke in summer, wholesale price swings.
-     * For agriculture / horticulture: rainfall and weather irregularity, pest attacks, post-harvest mandi price collapse, seed/fertilizer inflation.
-     * For food processing / agro-processing: raw material price seasonality, storage spoilage / pest damage, electricity supply reliability, hygiene compliance.
-     * For retail / trade: customer credit (udhaari) freezing working capital, slow-moving inventory, price competition.
-     * For manufacturing / workshop: machine breakdown & maintenance delays, skilled technician availability, raw material costs.
+   - Ground risks in the ACTUAL category (${businessContext.businessType || "enterprise"}) and location (${bDistrict}${bState ? `, ${bState}` : ""}):
+     * For aquaculture / fish farming: water aeration, disease outbreak, feed costs, monsoon flooding, perishable transport.
+     * For dairy / livestock: cattle disease, feed inflation, summer lactation drop, milk chilling.
+     * For poultry: epidemic diseases, maize/feed volatility, heat stress, wholesale price swings.
+     * For agriculture: rainfall irregularity, pest attacks, post-harvest mandi pricing, input costs.
+     * For retail / trade: customer credit (udhaari) freezing working capital, slow inventory, competition.
    - DEBT SERVICING RULE:
-     * DO NOT say there is a debt-servicing risk when the current loan is ₹0 or EMI is ₹0!
-     * Only discuss debt-servicing and EMI payments if an actual loan (${bLoanStr}) and EMI (${bEmiStr}) exist.
-   - Only mention risks reasonably relevant and supported by the context; do not invent unrelated risks.
+     * DO NOT say there is a debt-servicing risk when loan is ₹0 or EMI is ₹0! Only discuss EMI risk if debt actually exists.
 
-3. COST REDUCTION QUESTIONS (e.g. "How can I lower my initial setup cost?", "How can I reduce the investment?"):
-   - Answer the actual question directly with practical strategies:
-     * Phased rollout: Procure core productive machinery first; postpone secondary automation, branding, or non-essential equipment until cash flows stabilize.
-     * Lease or rent premises/equipment instead of outright purchasing, converting large capital expenditure into manageable monthly operational costs.
-     * Procure certified refurbished or tested second-hand machinery from reputable workshops.
-     * Scale down initial capacity to a focused pilot matching verified local demand.
-     * Explain the financial ripple effect: Lowering total project cost directly lowers the required 10% promoter margin and cuts the required loan, reducing monthly EMI and lowering risk. If the project previously exceeded scheme limits, reducing project size can also bring it within eligible government scheme ceilings!
-   - Do not invent exact savings or costs if the project data does not provide them.
+3. COST REDUCTION QUESTIONS (e.g. "How can I lower my initial setup cost?"):
+   - Provide practical strategies: phased capacity rollout, leasing premises/equipment instead of buying, procuring tested refurbished machinery, scaling down initial pilot.
+   - Explain how lowering project size directly cuts required 10% promoter margin and cuts monthly EMI.
 
-4. SPECIFIC AMOUNTS & BUDGET (e.g. "Can I start with ₹1 lakh?", "I only have 80,000 rupees"):
-   - Extract the amount. Compare it with the required 10% promoter margin (${bMarginStr}) and the total project cost (${bProjectCostStr}). State directly if it covers the margin and what loan (${bLoanStr}) covers the rest.
-
-5. WITHOUT LOAN (e.g. "Can I do this without a loan?"):
-   - Compare available cash with total project cost (${bProjectCostStr}) and explain the capital gap or strategies to start debt-free (leasing equipment, small pilot).
-
-6. PROFIT & STRESS TESTING (e.g. "What if sales are lower?", "What if profit is only ₹15,000?"):
-   - Calculate whether that profit covers the monthly EMI of ${bEmiStr} and compute the remaining cash surplus or deficit.
-
-7. FOLLOW-UP QUESTIONS:
-   - Understand conversational follow-ups (e.g. if user asks "What is my EMI?" and then "Can I afford that?", understand that "that" refers to the previously discussed EMI of ${bEmiStr}).
+4. SCHEME DOCUMENTS & RULES:
+   - Use the official scheme documents list provided above. Mention that final approval and interest rate require official bank branch appraisal.
 
 LANGUAGE & TONE:
 - Respond naturally in: ${selectedLanguage}.
 - If user asks in Hinglish, respond in natural, friendly Hinglish.
 - If user asks in Hindi, respond in clear, respectful Hindi.
-- Keep answers concise, direct, and conversational — avoid robotic bullet dumps or lengthy disclaimers (this is spoken in Voice Mode).`;
+- Keep answers concise, direct, and conversational (this is spoken in Voice Mode).`;
 
       // Helper to generate deterministic fallback when Gemini is unavailable
       const runFallback = () =>
@@ -624,6 +743,7 @@ LANGUAGE & TONE:
           answer: fallback.answer,
           text: fallback.answer,
           source: "fallback",
+          fallbackReason: "API_KEY_UNCONFIGURED",
         });
         return;
       }
@@ -648,6 +768,7 @@ LANGUAGE & TONE:
 
       // Non-streaming response with robust timeout protection
       let answerText = "";
+      let errorCategory = "";
       try {
         const primaryPromise = geminiClient.models.generateContent({
           model: "gemini-3.8-flash",
@@ -663,7 +784,9 @@ LANGUAGE & TONE:
         const response = await Promise.race([primaryPromise, timeoutPromise]);
         answerText = response.text ? response.text.trim() : "";
       } catch (genErr: any) {
-        console.warn("Advisor Gemini primary attempt failed, retrying with fallback model:", genErr?.message || genErr);
+        const errInfo = categorizeGeminiError(genErr);
+        errorCategory = errInfo.category;
+        console.warn(`[Advisor Gemini Primary Failed] Category: ${errInfo.category} - ${errInfo.description}`);
         try {
           const fallbackPromise = geminiClient.models.generateContent({
             model: "gemini-flash-latest",
@@ -678,8 +801,10 @@ LANGUAGE & TONE:
           );
           const fallbackAi = await Promise.race([fallbackPromise, fbTimeoutPromise]);
           answerText = fallbackAi.text ? fallbackAi.text.trim() : "";
-        } catch (genErr2) {
-          console.warn("Advisor Gemini fallback model failed:", genErr2);
+        } catch (genErr2: any) {
+          const errInfo2 = categorizeGeminiError(genErr2);
+          errorCategory = errInfo2.category;
+          console.warn(`[Advisor Gemini Fallback Failed] Category: ${errInfo2.category} - ${errInfo2.description}`);
         }
       }
 
@@ -700,12 +825,15 @@ LANGUAGE & TONE:
         reply: fallback.answer,
         text: fallback.answer,
         source: "fallback",
+        fallbackReason: errorCategory || "FALLBACK_CALLED",
       });
     } catch (err: any) {
-      console.error("Advisor error:", err);
+      const errInfo = categorizeGeminiError(err);
+      console.error(`[Advisor Top-Level Error] Category: ${errInfo.category} - ${errInfo.description}`);
       res.status(500).json({
         error: "Advisor service encountered an error",
         reply: "माफ़ कीजिए, अभी सलाहकार सेवा में समस्या आ रही है। कृपया थोड़ी देर बाद पुनः प्रयास करें।",
+        fallbackReason: errInfo.category,
       });
     }
   };

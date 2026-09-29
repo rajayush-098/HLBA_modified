@@ -15,6 +15,18 @@ import {
   AlertCircle,
   Square,
   Radio,
+  CheckCircle2,
+  AlertTriangle,
+  ShieldCheck,
+  Calculator,
+  Coins,
+  FileText,
+  Store,
+  TrendingUp,
+  TrendingDown,
+  ChevronDown,
+  ChevronUp,
+  Wallet,
 } from "lucide-react";
 import { getAdvisorAdvice } from "../advisorLogic";
 import { speakText, stopSpeaking } from "../utils/speech";
@@ -56,8 +68,8 @@ export default function PageAdvisor({ result, lang = "hi", formatCurrency, busin
     monthlyExpenses: rawCtx.monthlyExpenses ?? rawCtx.monthly_expenses ?? result?.financial_analysis?.monthly_expenses ?? null,
     monthlyProfit: rawCtx.monthlyProfit ?? rawCtx.monthly_profit ?? result?.financial_analysis?.monthly_profit ?? null,
     roiPercentage: rawCtx.roiPercentage ?? rawCtx.roi_percentage ?? result?.financial_analysis?.roi_percentage ?? null,
-    feasibility: rawCtx.feasibility || result?.feasibilityVerdict || result?.feasibility || "Feasible",
-    affordabilityStatus: rawCtx.affordabilityStatus || result?.loan_affordability?.affordability_status || "Eligible",
+    feasibility: rawCtx.feasibility || result?.feasibilityVerdict || result?.feasibility || (isHi ? "सत्यापन आवश्यक" : "Requires Verification"),
+    affordabilityStatus: rawCtx.affordabilityStatus || result?.loan_affordability?.affordability_status || (isHi ? "सत्यापन आवश्यक" : "Requires Verification"),
     localDemand: rawCtx.localDemand || result?.hyper_local_profile?.local_demand || "Medium",
     competitionLevel: rawCtx.competitionLevel || result?.risk_analysis?.competition_level || "Medium",
     localMarketData: rawCtx.localMarketData || result?.hyper_local_profile?.market_reach || null,
@@ -136,6 +148,7 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
   const [speakingId, setSpeakingId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [showAssumptions, setShowAssumptions] = useState(false);
 
   // Voice Conversation Mode State & Single Authoritative Refs
   const [isVoiceMode, setIsVoiceMode] = useState(false);
@@ -409,24 +422,14 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
       ta: "ஆரம்ப அமைவு செலவை எவ்வாறு குறைக்கலாம்?",
     },
     {
-      id: "equipment-loan",
-      en: "Is this loan amount enough for equipment?",
-      hi: "क्या यह लोन राशि मशीनरी/सामान के लिए पर्याप्त है?",
-      hinglish: "Kya ye loan amount machine aur saman ke liye kaafi hai?",
-      mr: "ही कर्ज रक्कम यंत्रसामग्रीसाठी पुरेशी आहे का?",
-      bn: "এই ঋণ কি মেশিনারির জন্য যথেষ্ট?",
-      te: "ఈ రుణ మొత్తం పరికరాలకు సరిపోతుందా?",
-      ta: "இந்த கடன் தொகை உபகரணங்களுக்கு போதுமானதா?",
-    },
-    {
-      id: "main-risks",
-      en: "What are the main risks for this business here?",
-      hi: "यहाँ इस व्यापार में मुख्य खतरे और जोखिम क्या हैं?",
-      hinglish: "Is business me sabse bada risk kya hai?",
-      mr: "येथे या व्यवसायासाठी मुख्य जोखीम काय आहेत?",
-      bn: "এখানে এই ব্যবসার মূল ঝুঁকিগুলি কী কী?",
-      te: "ఇక్కడ ఈ వ్యాపారంలో ప్రధాన ప్రమాదాలు ఏమిటి?",
-      ta: "இங்கு இந்த தொழிலுக்கான முக்கிய ஆபத்துகள் என்ன?",
+      id: "cost-stress",
+      en: "What happens if my costs increase by ₹5,000?",
+      hi: "अगर मेरा खर्च ₹5,000 बढ़ जाए तो क्या होगा?",
+      hinglish: "Agar monthly kharcha ₹5,000 badh jaye to kya hoga?",
+      mr: "माझा खर्च ₹५,००० वाढल्यास काय होईल?",
+      bn: "যদি আমার খরচ ₹৫,০০০ বৃদ্ধি পায় তবে কী হবে?",
+      te: "నా ఖర్చులు ₹5,000 పెరిగితే ఏమవుతుంది?",
+      ta: "என் செலவுகள் ₹5,000 உயர்ந்தால் என்ன நடக்கும்?",
     },
     {
       id: "emi-affordability",
@@ -439,14 +442,34 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
       ta: "மாதாந்திர தவணையை (EMI) நான் எளிதாக செலுத்த முடியுமா?",
     },
     {
-      id: "local-customers",
-      en: "How to get more customers in my village?",
-      hi: "गाँव और स्थानीय बाज़ार में ज़्यादा ग्राहक कैसे जोड़ें?",
-      hinglish: "Gaon aur bazaar me zyada customer kaise layein?",
-      mr: "स्थानिक बाजारपेठेत अधिक ग्राहक कसे मिळवावेत?",
-      bn: "গ্রামের বাজারে বেশি ক্রেতা কিভাবে আকর্ষণ করব?",
-      te: "స్థానిక మార్కెట్‌లో ఎక్కువ మంది కస్టమర్లను ఎలా పొందాలి?",
-      ta: "கிராமப்புற சந்தையில் அதிக வாடிக்கையாளர்களை ஈர்ப்பது எப்படி?",
+      id: "without-loan",
+      en: "Can I do this without a loan?",
+      hi: "क्या मैं बिना बैंक लोन के यह काम शुरू कर सकता हूँ?",
+      hinglish: "Kya bina loan ke ye kaam shuru ho sakta hai?",
+      mr: "कर्जाशिवाय हा व्यवसाय सुरू करता येईल का?",
+      bn: "ঋণ ছাড়া কি এই ব্যবসা করা সম্ভব?",
+      te: "రుణం లేకుండా ఈ పని చేయగలనా?",
+      ta: "கடன் இல்லாமல் இதை செய்ய முடியுமா?",
+    },
+    {
+      id: "sales-drop",
+      en: "What if sales are lower than expected?",
+      hi: "अगर बिक्री अनुमान से कम रहे तो क्या होगा?",
+      hinglish: "Agar sales thodi kam hui to munafa kaisa rahega?",
+      mr: "अपेक्षेपेक्षा विक्री कमी झाल्यास काय?",
+      bn: "বিক্রয় আশানুরূপ না হলে কী হবে?",
+      te: "అమ్మకాలు తగ్గితే పరిస్థితి ఏమిటి?",
+      ta: "விற்பனை குறைந்தால் என்ன நடக்கும்?",
+    },
+    {
+      id: "main-risks",
+      en: "What are the main risks for this business here?",
+      hi: "यहाँ इस व्यापार में मुख्य खतरे और जोखिम क्या हैं?",
+      hinglish: "Is business me sabse bada risk kya hai?",
+      mr: "येथे या व्यवसायासाठी मुख्य जोखीम काय आहेत?",
+      bn: "এখানে এই ব্যবসার মূল ঝুঁকিগুলি কী কী?",
+      te: "ఇక్కడ ఈ వ్యాపారంలో ప్రధాన ప్రమాదాలు ఏమిటి?",
+      ta: "இங்கு இந்த தொழிலுக்கான முக்கிய ஆபத்துகள் என்ன?",
     },
     {
       id: "scheme-documents",
@@ -458,7 +481,28 @@ Aap mujhse setup cost kam karne, machine khareedne ya gaon me bikri badhane ke b
       te: "ఈ ప్రభుత్వ రుణానికి ఏ పత్రాలు అవసరం?",
       ta: "இந்த அரசு கடனுதவிக்கு என்னென்ன ஆவணங்கள் தேவை?",
     },
+    {
+      id: "local-customers",
+      en: "How to get more customers in my village?",
+      hi: "गाँव और स्थानीय बाज़ार में ज़्यादा ग्राहक कैसे जोड़ें?",
+      hinglish: "Gaon aur bazaar me zyada customer kaise layein?",
+      mr: "स्थानिक बाजारपेठेत अधिक ग्राहक कसे मिळवावेत?",
+      bn: "গ্রামের বাজারে বেশি ক্রেता কিভাবে আকর্ষণ করব?",
+      te: "స్థానిక మార్కెట్‌లో ఎక్కువ మంది కస్టమర్లను ఎలా పొందాలి?",
+      ta: "கிராமப்புற சந்தையில் அதிக வாடிக்கையாளர்களை ஈர்ப்பது எப்படி?",
+    },
   ];
+
+  const PROMPT_ICONS = {
+    "lower-cost": Coins,
+    "cost-stress": TrendingUp,
+    "emi-affordability": Calculator,
+    "without-loan": Wallet,
+    "sales-drop": TrendingDown,
+    "main-risks": AlertTriangle,
+    "scheme-documents": FileText,
+    "local-customers": Store,
+  };
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -858,6 +902,161 @@ When advising the user, actively use the real-time market data. If they ask abou
         </div>
       </div>
 
+      {/* Assumptions & Data Transparency (Part 7) */}
+      <div
+        style={{
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          borderRadius: "10px",
+          marginBottom: "16px",
+          padding: "10px 16px",
+          fontSize: "12px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+          onClick={() => setShowAssumptions((prev) => !prev)}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <ShieldCheck size={16} style={{ color: "#0284c7" }} />
+            <span style={{ fontWeight: 700, color: "#1e293b", fontSize: "12.5px" }}>
+              {isHi ? "वित्तीय मान्यताएं व डेटा स्रोत (Data Provenance)" : "Financial Assumptions & Data Provenance"}
+            </span>
+            <span style={{ fontSize: "11px", color: "#64748b", background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>
+              {showAssumptions ? (isHi ? "छिपाएं" : "Collapse") : (isHi ? "विवरण देखें" : "View Details")}
+            </span>
+          </div>
+          <button
+            type="button"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}
+            aria-label="Toggle assumptions"
+          >
+            {showAssumptions ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+        </div>
+
+        {showAssumptions && (
+          <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid #e2e8f0" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "10px" }}>
+              {/* User Provided */}
+              {ctx.monthlyRevenue != null && (
+                <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #dcfce7" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#15803d", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                    <CheckCircle2 size={13} />
+                    <span>{isHi ? "उपयोगकर्ता द्वारा दर्ज" : "User Provided"}</span>
+                  </div>
+                  <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                    {isHi ? "अनुमानित मासिक बिक्री:" : "Expected Monthly Sales:"} ₹{formatCurrency ? formatCurrency(ctx.monthlyRevenue) : Number(ctx.monthlyRevenue).toLocaleString("en-IN")}
+                  </div>
+                </div>
+              )}
+
+              {ctx.monthlyExpenses != null && (
+                <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #dcfce7" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#15803d", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                    <CheckCircle2 size={13} />
+                    <span>{isHi ? "उपयोगकर्ता द्वारा दर्ज" : "User Provided"}</span>
+                  </div>
+                  <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                    {isHi ? "मासिक परिचालन खर्च:" : "Monthly Operating Cost:"} ₹{formatCurrency ? formatCurrency(ctx.monthlyExpenses) : Number(ctx.monthlyExpenses).toLocaleString("en-IN")}
+                  </div>
+                </div>
+              )}
+
+              {ctx.promoterMargin != null && (
+                <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #dcfce7" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#15803d", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                    <CheckCircle2 size={13} />
+                    <span>{isHi ? "उपयोगकर्ता द्वारा दर्ज" : "User Provided"}</span>
+                  </div>
+                  <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                    {isHi ? "उपलब्ध मार्जिन पूँजी:" : "Available Margin Capital:"} ₹{formatCurrency ? formatCurrency(ctx.promoterMargin) : Number(ctx.promoterMargin).toLocaleString("en-IN")}
+                  </div>
+                </div>
+              )}
+
+              {/* Calculated */}
+              {ctx.monthlyEmi != null && (
+                <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #dbeafe" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#1d4ed8", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                    <Calculator size={13} />
+                    <span>{isHi ? "गणना की गई (Calculated)" : "Calculated"}</span>
+                  </div>
+                  <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                    {isHi ? "मासिक बैंक किश्त (EMI):" : "Monthly EMI:"} ₹{formatCurrency ? formatCurrency(ctx.monthlyEmi) : Number(ctx.monthlyEmi).toLocaleString("en-IN")}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>
+                    {isHi ? "घटते मूलधन (Reducing-balance) फॉर्मूले से" : "Computed via standard reducing-balance"}
+                  </div>
+                </div>
+              )}
+
+              {ctx.totalProjectCost != null && (
+                <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #dbeafe" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#1d4ed8", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                    <Calculator size={13} />
+                    <span>{isHi ? "गणना की गई (Calculated)" : "Calculated"}</span>
+                  </div>
+                  <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                    {isHi ? "कुल प्रोजेक्ट लागत:" : "Total Project Cost:"} ₹{formatCurrency ? formatCurrency(ctx.totalProjectCost) : Number(ctx.totalProjectCost).toLocaleString("en-IN")}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>
+                    {isHi ? "10% मार्जिन पूँजी आवश्यकता के आधार पर" : "Derived from 10% promoter equity rule"}
+                  </div>
+                </div>
+              )}
+
+              {/* Assumed */}
+              <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #fef3c7" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#b45309", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                  <AlertTriangle size={13} />
+                  <span>{isHi ? "मान्यता (Assumed)" : "Assumed for Illustration"}</span>
+                </div>
+                <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                  {isHi ? "ब्याज दर:" : "Interest Rate:"} {ctx.interestRate ? `${ctx.interestRate}%` : "6.5% - 8.0%"}
+                </div>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>
+                  {isHi ? "बैंक के वास्तविक नियम व क्रेडिट स्कोर पर निर्भर" : "Benchmark figure; final bank sanction terms may differ"}
+                </div>
+              </div>
+
+              <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #fef3c7" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#b45309", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                  <AlertTriangle size={13} />
+                  <span>{isHi ? "मान्यता (Assumed)" : "Assumed for Illustration"}</span>
+                </div>
+                <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                  {isHi ? "अवधि व मोराटोरियम:" : "Tenure & Moratorium:"} {ctx.loanTenureMonths ? `${ctx.loanTenureMonths} माह` : "36-84 माह"} ({ctx.moratoriumMonths != null ? `${ctx.moratoriumMonths} माह मोराटोरियम` : "3-6 माह मोराटोरियम"})
+                </div>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>
+                  {isHi ? "योजना के मानक नियमों पर आधारित" : "Standard benchmark; subject to sanction letter"}
+                </div>
+              </div>
+
+              {/* Verified */}
+              <div style={{ background: "#ffffff", padding: "8px 12px", borderRadius: "8px", border: "1px solid #ede9fe" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#6d28d9", fontWeight: 700, fontSize: "11px", textTransform: "uppercase" }}>
+                  <ShieldCheck size={13} />
+                  <span>{isHi ? "सत्यापित डेटा (Verified Dataset)" : "Verified Dataset"}</span>
+                </div>
+                <div style={{ marginTop: "3px", color: "#1e293b", fontWeight: 600 }}>
+                  {ctx.matchedScheme}
+                </div>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>
+                  JanSamarth / MoMSME Dataset (2026-09-24)
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Pre-suggested Prompts Bar */}
       <div className="detail-card" style={{ marginBottom: "16px", padding: "14px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
@@ -896,6 +1095,7 @@ When advising the user, actively use the real-time market data. If they ask abou
         >
           {suggestedPrompts.map((sp) => {
             const promptText = sp[lang] || sp.en;
+            const PromptIcon = PROMPT_ICONS[sp.id] || HelpCircle;
             return (
               <button
                 key={sp.id}
@@ -930,6 +1130,7 @@ When advising the user, actively use the real-time market data. If they ask abou
                   e.currentTarget.style.color = "#1e293b";
                 }}
               >
+                <PromptIcon size={13} style={{ color: "#2563eb", flexShrink: 0 }} />
                 <span>{promptText}</span>
               </button>
             );

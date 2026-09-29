@@ -1,5 +1,33 @@
 import { useEffect } from "react";
-import { X, Layers } from "lucide-react";
+import {
+  X,
+  Layers,
+  BarChart3,
+  Wallet,
+  TrendingUp,
+  Landmark,
+  CalendarCheck,
+  Store,
+  Lightbulb,
+  ShieldCheck,
+  AlertTriangle,
+  Sparkles,
+  Award,
+} from "lucide-react";
+
+const PAGE_ICONS = {
+  overview: BarChart3,
+  profit: Wallet,
+  projection: TrendingUp,
+  loan: Landmark,
+  emi: CalendarCheck,
+  market: Store,
+  opportunities: Lightbulb,
+  swot: ShieldCheck,
+  risk: AlertTriangle,
+  advisor: Sparkles,
+  report: Award,
+};
 
 export default function SidebarNav({
   pages,
@@ -78,7 +106,7 @@ export default function SidebarNav({
               marginBottom: "8px",
             }}
           >
-            {result?.feasibilityVerdict || result?.feasibility || "Feasible"}
+            {result?.feasibilityVerdict || result?.feasibility || (lang === "hi" ? "सत्यापन आवश्यक" : "Requires Verification")}
           </div>
 
           <button
@@ -101,6 +129,7 @@ export default function SidebarNav({
         <nav className="sidebar-menu" aria-label="Analysis Side Pages">
           {pages.map((p, idx) => {
             const isActive = activePageId === p.id;
+            const PageIcon = PAGE_ICONS[p.id];
             return (
               <button
                 key={p.id}
@@ -111,8 +140,9 @@ export default function SidebarNav({
                   if (onClose) onClose();
                 }}
               >
-                <span className="menu-num">
-                  {String(idx + 1).padStart(2, "0")}
+                <span className="menu-num" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                  {PageIcon && <PageIcon size={13} style={{ opacity: 0.9 }} />}
+                  <span>{String(idx + 1).padStart(2, "0")}</span>
                 </span>
                 <div className="menu-text-wrap">
                   <span className="menu-title">{p.title[lang] || p.title.en}</span>

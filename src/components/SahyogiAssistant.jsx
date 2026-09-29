@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { UserRound, X } from "lucide-react";
 import { API_ROUTES } from "../apiRoutes";
 
 let msgCounter = 1;
@@ -148,13 +149,35 @@ export default function SahyogiAssistant({ currentResult, lang }) {
 
   return (
     <div className="sahyogi-container smrity-container" id="sahyogi-widget">
+      {/* Small Help Bubble (Visible when popup is closed) */}
+      {!isOpen && (
+        <div
+          className="sahyogi-help-bubble"
+          onClick={() => setIsOpen(true)}
+          role="button"
+          tabIndex={0}
+          aria-label="Need any help, ask Sahyogi"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setIsOpen(true);
+            }
+          }}
+        >
+          <span className="sahyogi-help-bubble-text">Need any help, ask Sahyogi</span>
+          <span className="sahyogi-help-bubble-pointer" aria-hidden="true" />
+        </div>
+      )}
+
       {/* Chat Popup Box */}
       {isOpen && (
         <div className="sahyogi-popup smrity-popup" role="dialog" aria-label="SAHYOGI Assistant">
           {/* Header */}
           <div className="sahyogi-header smrity-header">
             <div className="sahyogi-header-left smrity-header-left">
-              <div className="sahyogi-avatar smrity-avatar">S</div>
+              <div className="sahyogi-avatar smrity-avatar" aria-hidden="true">
+                <UserRound size={18} />
+              </div>
               <div>
                 <h4 className="sahyogi-title smrity-title">
                   {lang === "hi" ? "सहयोगी (SAHYOGI)" : "SAHYOGI (सहयोगी)"}
@@ -170,7 +193,7 @@ export default function SahyogiAssistant({ currentResult, lang }) {
               onClick={() => setIsOpen(false)}
               aria-label="Close SAHYOGI"
             >
-              ✕
+              <X size={18} />
             </button>
           </div>
 
@@ -181,7 +204,11 @@ export default function SahyogiAssistant({ currentResult, lang }) {
                 key={m.id}
                 className={`smrity-msg-row ${m.sender === "user" ? "user-row" : "smrity-row"}`}
               >
-                {m.sender !== "user" && <div className="smrity-mini-avatar">S</div>}
+                {m.sender !== "user" && (
+                  <div className="smrity-mini-avatar" aria-hidden="true">
+                    <UserRound size={13} />
+                  </div>
+                )}
                 <div className={`smrity-bubble ${m.sender === "user" ? "user-bubble" : "smrity-bubble-ai"}`}>
                   <p className="smrity-text">{m.text}</p>
                   <span className="smrity-time">{m.time}</span>
@@ -191,7 +218,9 @@ export default function SahyogiAssistant({ currentResult, lang }) {
 
             {loading && (
               <div className="smrity-msg-row smrity-row">
-                <div className="smrity-mini-avatar">S</div>
+                <div className="smrity-mini-avatar" aria-hidden="true">
+                  <UserRound size={13} />
+                </div>
                 <div className="smrity-bubble smrity-bubble-ai loading-bubble">
                   <span className="typing-dot"></span>
                   <span className="typing-dot"></span>
@@ -249,7 +278,9 @@ export default function SahyogiAssistant({ currentResult, lang }) {
         aria-expanded={isOpen}
         title={isOpen ? (lang === "hi" ? "सहयोगी बंद करें" : "Close SAHYOGI") : (lang === "hi" ? "सहयोगी से सवाल पूछें" : "Ask SAHYOGI")}
       >
-        <span className="smrity-trigger-badge">{isOpen ? "✕" : "S"}</span>
+        <span className="smrity-trigger-badge">
+          {isOpen ? <X size={20} /> : <UserRound size={22} />}
+        </span>
         <span className="smrity-trigger-subtext">SAHYOGI</span>
       </button>
     </div>

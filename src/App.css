@@ -2679,6 +2679,60 @@ button {
   font-family: inherit;
 }
 
+/* SAHYOGI Help Bubble above floating button */
+.sahyogi-help-bubble {
+  position: absolute;
+  bottom: 68px;
+  right: 0;
+  background-color: #0f172a;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.22);
+  border: 1px solid #3b82f6;
+  white-space: nowrap;
+  cursor: pointer;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: sahyogiBubbleFloat 3.5s ease-in-out infinite;
+  transition: transform 0.18s ease, background-color 0.18s ease;
+  user-select: none;
+}
+
+.sahyogi-help-bubble:hover {
+  background-color: #1e293b;
+  border-color: #60a5fa;
+  transform: translateY(-2px);
+}
+
+.sahyogi-help-bubble-text {
+  letter-spacing: 0.2px;
+}
+
+.sahyogi-help-bubble-pointer {
+  position: absolute;
+  bottom: -6px;
+  right: 22px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid #0f172a;
+}
+
+@keyframes sahyogiBubbleFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
 /* Floating Corner Trigger Button - Circle */
 .smrity-trigger-button {
   display: flex;
@@ -2709,8 +2763,9 @@ button {
 }
 
 .smrity-trigger-badge {
-  font-size: 19px;
-  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #60a5fa;
   line-height: 1;
 }
